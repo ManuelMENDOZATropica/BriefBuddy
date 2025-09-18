@@ -1,0 +1,19 @@
+﻿# node / build
+node_modules/
+dist/
+build/
+
+# env / secrets
+.env
+.env.*
+*.pem
+*.key
+id_rsa
+id_ed25519
+*.ppk
+*.pem
+
+# SO / editores
+.DS_Store
+Thumbs.db
+.vscode/
