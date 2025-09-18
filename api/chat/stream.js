@@ -1,31 +1,17 @@
-import express from "express";
-import cors from "cors";
-import dotenv from "dotenv";
+// api/chat/stream.js
 import OpenAI from "openai";
 
-dotenv.config();
-
-const app = express();
-app.use(cors());
-app.use(express.json());
-app.use(express.static("public"));
-
-
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
-/* =============== PROMPT BASE =============== */
+// === Prompt & helpers (idénticos a tu server local) ===
 const SYSTEM_PROMPT = `
 Eres **BRIEF BUDDY @TRÓPICA**, un Project Manager creativo especializado en briefs publicitarios y de comunicación.
-
 - Personalidad: cálido, empático, cercano, profesional. Estilo: guía paso a paso, claridad, simplicidad, sin jerga.
 - Propósito: construir briefs claros y accionables para creatividad, publicidad y tecnología.
 - Secuencia fija: Contacto → Alcance → Objetivos → Audiencia → Marca → Entregables → Logística → Extras.
-- Dinámica por turno: (1) reconoce lo recibido; (2) mini-resumen en bullets de la sección actual; (3) **una sola pregunta** para la **siguiente** sección.
+- Dinámica por turno: (1) reconoce lo recibido; (2) mini-resumen en bullets de la sección actual (si aplica); (3) **una sola pregunta** para la **siguiente** sección.
 - Validaciones: emails correctos, fechas realistas, links válidos, compatibilidad tiempos/entregables.
-- Reglas: no asumas presupuestos ni fechas; no avances si faltan datos críticos; evita preguntas genéricas.
+- Reglas: no asumas presupuestos ni fechas; no avances si faltan datos críticos; evita preguntas genéricas;
 - **Formato SIEMPRE en Markdown** (negritas, bullets, saltos de línea). Evita bloques de código salvo que sea imprescindible.
 `;
-
 const SECTIONS = ["Contacto","Alcance","Objetivos","Audiencia","Marca","Entregables","Logística","Extras"];
 const NEXT_QUESTION = {
   Contacto: "¿Me compartes tu nombre completo y correo?",
@@ -37,8 +23,6 @@ const NEXT_QUESTION = {
   Logística: "Fechas clave y dependencias: ¿hay deadline, presupuesto tentativo, aprobaciones o restricciones?",
   Extras: "¿Hay riesgos, supuestos, referencias o notas adicionales que debamos considerar?"
 };
-
-/* =============== HEURÍSTICAS LIGERAS =============== */
 const detectors = {
   Contacto: (t) => /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i.test(t) && /\b([A-Za-zÁÉÍÓÚÑáéíóúñ]{2,}\s+[A-Za-zÁÉÍÓÚÑáéíóúñ]{2,})\b/.test(t),
   Alcance: (t) => /\b(alcance|piezas?|entregables?|video|kv|banners?|sitio|landing|app|spot|ooh|social|camp[aá]ña)\b/i.test(t) || t.split(/\s+/).length > 20,
@@ -49,79 +33,56 @@ const detectors = {
   Logística: (t) => /\b(\d{1,2}\/\d{1,2}(\/\d{2,4})?|\d{4}-\d{2}-\d{2}|hoy|ma[ñn]ana|semana|mes|deadline|fecha|entrega|presupuesto|budget|aprobaciones?|stakeholders?)\b/i.test(t),
   Extras: (t) => /\b(riesgos?|supuestos?|referencias?|links?|notas?|extras?)\b/i.test(t),
 };
-
-function transcriptText(messages = []) {
-  return messages.map(m => m?.content || "").join("\n");
-}
-function sectionCompleted(section, txt) {
-  try { return detectors[section]?.(txt) || false; } catch { return false; }
-}
-function nextSection(txt) {
-  for (const s of SECTIONS) if (!sectionCompleted(s, txt)) return s;
-  return "Extras";
-}
-function buildStateNudge(messages = []) {
+const transcriptText = (messages=[]) => messages.map(m => m?.content || "").join("\n");
+const sectionCompleted = (s, txt) => { try { return detectors[s]?.(txt) || false; } catch { return false; } };
+const nextSection = (txt) => { for (const s of SECTIONS) if (!sectionCompleted(s, txt)) return s; return "Extras"; };
+function buildStateNudge(messages=[]) {
   const txt = transcriptText(messages);
   const current = nextSection(txt);
   const idx = SECTIONS.indexOf(current);
   const prev = idx > 0 ? SECTIONS[idx - 1] : null;
 
-  let progress;
-  if (prev) {
-    // Sección anterior completada → confirma en positivo
-    progress = `Sección **${prev}** completada. Reconoce y agradece lo recibido brevemente. Ahora avanza a **${current}**.`;
-  } else {
-    // Primera sección → pide directo
-    progress = `Iniciemos en **${current}**. Pide los datos necesarios de manera positiva, sin preguntar si desea comenzar.`;
-  }
+  const progress = prev
+    ? `Sección **${prev}** completada. Agradece lo recibido brevemente. Ahora avanza a **${current}**.`
+    : `Iniciemos en **${current}**. Pide los datos necesarios sin preguntar si desea comenzar.`;
 
   const ask = `Acción:
-- Haz un mini-resumen en bullets SOLO si ya hay datos válidos de la sección actual.
+- Mini-resumen en bullets solo si ya hay datos válidos de la sección actual.
 - Formula **una sola pregunta** clara y positiva para **${current}**.
-- Nunca digas frases como "no has compartido información" o "¿quieres comenzar?".
-- Si falta algo, pídelo de forma cordial: "¿Podrías compartirme tu correo?" en lugar de remarcar ausencia.`;
+- Nunca digas "no has compartido información" ni "¿quieres comenzar?". Avanza siempre.`;
 
   const suggested = `Pregunta sugerida: "${NEXT_QUESTION[current] || "Continuemos con la siguiente sección, ¿de acuerdo?"}"`;
 
   return `${progress}\n${ask}\n${suggested}`;
 }
 
-/* =============== STREAMING (SSE) =============== */
-/** 
- * GET /api/chat/stream?messages=<json-urlencoded>
- * - messages: array JSON de {role, content} con todo el historial (user/assistant)
- * - Si no viene nada, se asume bienvenida (Contacto).
- */
-app.get("/api/chat/stream", async (req, res) => {
+export default async function handler(req, res) {
   try {
-    // Recuperar historial desde query (para poder usar EventSource)
+    if (req.method !== "GET") { res.status(405).send("Method Not Allowed"); return; }
+
+    // Parse historial desde query (?messages=...)
     let messages = [];
     if (req.query.messages) {
       try { messages = JSON.parse(String(req.query.messages)); }
       catch { messages = []; }
     }
-
-    // Si no hay historial, producir bienvenida dirigida a Contacto
     const isWelcome = messages.length === 0;
 
-    const sseHeaders = {
-      "Content-Type": "text/event-stream; charset=utf-8",
-      "Cache-Control": "no-cache, no-transform",
-      Connection: "keep-alive",
-    };
-    Object.entries(sseHeaders).forEach(([k, v]) => res.setHeader(k, v));
-    res.flushHeaders?.();
+    // Cabeceras SSE
+    res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
+    res.setHeader("Connection", "keep-alive");
 
-    // Nudge de estado (flujo secuencial)
+    // Cierre limpio
+    req.on("close", () => { try { res.end(); } catch {} });
+
+    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
     const stateNudge = isWelcome
-  ? `Saluda de manera cálida (2–3 líneas) y explica qué harás. 
-     Luego pasa DIRECTO a la sección **Contacto** con una sola pregunta positiva (nombre y correo).
-     No uses frases como "¿quieres comenzar?" ni remarques que falta información.`
-  : buildStateNudge(messages);
+      ? `Saluda (2–3 líneas), explica brevemente qué harás y pasa DIRECTO a **Contacto** con una sola pregunta (nombre y correo). No preguntes si desea comenzar ni remarques ausencia.`
+      : buildStateNudge(messages);
 
-
-    // Construir mensajes para el modelo (manteniendo historial)
-    const payload = {
+    const stream = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       stream: true,
       temperature: 0.7,
@@ -130,9 +91,7 @@ app.get("/api/chat/stream", async (req, res) => {
         { role: "system", content: stateNudge },
         ...messages,
       ],
-    };
-
-    const stream = await openai.chat.completions.create(payload);
+    });
 
     for await (const chunk of stream) {
       const delta = chunk?.choices?.[0]?.delta?.content;
@@ -142,13 +101,9 @@ app.get("/api/chat/stream", async (req, res) => {
     res.end();
   } catch (err) {
     console.error(err);
-    res.write(`event: error\ndata: ${JSON.stringify("OpenAI error")}\n\n`);
-    res.end();
+    try {
+      res.write(`event: error\ndata: ${JSON.stringify("OpenAI error")}\n\n`);
+      res.end();
+    } catch {}
   }
-});
-
-// Estáticos
-app.use(express.static("public"));
-
-const port = process.env.PORT || 3000;
-app.listen(port, () => console.log(`→ http://localhost:${port}`));
+}
