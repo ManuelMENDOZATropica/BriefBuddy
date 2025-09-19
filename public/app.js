@@ -198,7 +198,7 @@ function resetConversation() {
 }
 
 /* ------------------------------ Bindings ------------------------------ */
-sendBtn.onclick = send;
+sendBtn.onclick =  send;
 if (resetBtn) resetBtn.onclick = resetConversation;
 
 // Shift+Enter = enviar  |  Enter = newline
