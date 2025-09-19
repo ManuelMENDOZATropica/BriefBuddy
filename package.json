@@ -1,8 +1,19 @@
 {
   "name": "brief-buddy",
+  "version": "1.0.0",
   "type": "module",
   "private": true,
+  "scripts": {
+    "local": "vercel dev",
+    "build": "echo \"No build step\"",
+    "start": "node -e \"console.log('Usa `vercel dev` en local')\""
+  },
   "dependencies": {
-    "openai": "^4.57.0"
+    "busboy": "^1.6.0",
+    "formidable": "^3.5.4",
+    "googleapis": "^160.0.0",
+    "mammoth": "^1.10.0",
+    "openai": "^4.57.0",
+    "pdf-parse": "^1.1.1"
   }
 }
