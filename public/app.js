@@ -1,53 +1,94 @@
+// public/app.js
 const log = document.getElementById("log");
 const input = document.getElementById("input");
 const sendBtn = document.getElementById("send");
 const resetBtn = document.getElementById("reset");
 const fileInput = document.getElementById("fileInput");
 
-// valla de seguridad por si quedaron datos de versiones previas
 try {
   localStorage.removeItem("briefBuddyHistory");
   sessionStorage.removeItem("briefBuddyHistory");
 } catch {}
 
-const history = [];         // SOLO memoria
-const MAX_TURNS = 20;       // para no saturar la URL del SSE
+const history = [];
+const MAX_TURNS = 20;
+
+let selectedFile = null;        // Se conserva para /api/finalize
+let finalizeTriggered = false;  // Evita doble finalize
+
+// Comentarios ocultos que envía el asistente
+const PROGRESS_RE = /<!--\s*PROGRESS\s*:\s*(\{[\s\S]*?\})\s*-->/i;
+const AUTO_RE     = /<!--\s*AUTO_FINALIZE\s*:\s*(\{[\s\S]*?\})\s*-->/i;
 
 /* ------------------------------ UI helpers ------------------------------ */
 function addUserBubble(text) {
   const div = document.createElement("div");
   div.className = "bubble user";
   div.textContent = text;
-  log.prepend(div); // mostramos arriba
+  log.prepend(div);
 }
-
 function addBotContainer() {
   const div = document.createElement("div");
   div.className = "bubble bot";
   div.innerHTML = "";
-  log.prepend(div); // mostramos arriba
+  log.prepend(div);
   return div;
 }
-
 function renderMarkdown(el, md) {
   const cleaned = (md || "").replace(/\n{3,}/g, "\n\n");
   el.innerHTML = marked.parse(cleaned);
 }
-
 function trimHistory() {
   const start = Math.max(0, history.length - MAX_TURNS);
   return history.slice(start);
 }
-
 function showWarning(msg) {
   renderMarkdown(addBotContainer(), `⚠️ ${msg}`);
 }
-
 function showInfo(msg) {
   renderMarkdown(addBotContainer(), msg);
 }
 
-/* ------------------------------ Streaming ------------------------------ */
+/* ------------------------------ Archivo ------------------------------ */
+fileInput.addEventListener("change", () => {
+  selectedFile = fileInput.files[0] || null;
+});
+
+/* ------------------------------ Auto-finalize ------------------------------ */
+async function finalizeBriefAuto(meta = {}) {
+  if (finalizeTriggered) return;
+  finalizeTriggered = true;
+
+  showInfo("⏳ Generando carpeta de proyecto y documentos en Drive…");
+
+  try {
+    const fd = new FormData();
+    if (selectedFile) fd.append("file", selectedFile);
+    fd.append("messages", JSON.stringify(trimHistory()));
+    if (meta.category) fd.append("category", meta.category);
+    if (meta.client) fd.append("client", meta.client);
+
+    const r = await fetch("/api/finalize", { method: "POST", body: fd });
+    const data = await r.json();
+
+    if (!r.ok) throw new Error(data?.error || `${r.status} ${r.statusText}`);
+
+    renderMarkdown(
+      addBotContainer(),
+      `
+**Proyecto creado:** [${data.projectFolder.name}](${data.projectFolder.link})  
+**Brief:** [${data.briefDoc.name}](${data.briefDoc.link})  
+**State of Art:** [doc](${data.stateOfArt.docLink}) · [carpeta](${data.stateOfArt.folderLink})
+${data.file ? `\n**Archivo:** [${data.file.name}](${data.file.link})` : ""}
+      `.trim()
+    );
+  } catch (e) {
+    showWarning("No pude finalizar automáticamente: " + (e.message || e));
+    finalizeTriggered = false; // permite reintento si lo deseas
+  }
+}
+
+/* ------------------------------ Streaming con detección de comentarios ------------------------------ */
 function streamReply(messages) {
   const qs = encodeURIComponent(JSON.stringify(messages));
   const es = new EventSource(`/api/chat/stream?messages=${qs}`);
@@ -56,25 +97,41 @@ function streamReply(messages) {
   let accum = "";
   let scheduled = false;
 
-  function flush() {
-    scheduled = false;
-    renderMarkdown(botDiv, accum);
-    log.scrollTop = log.scrollHeight;
-  }
-
   es.onmessage = (e) => {
     try {
       const chunk = JSON.parse(e.data);
       accum += chunk;
+
+      // Detecta comentarios ocultos (progreso / auto-finalize)
+      const mProg = accum.match(PROGRESS_RE);
+      if (mProg) {
+        // Ejemplo opcional:
+        // const progress = JSON.parse(mProg[1]);
+        // console.log('PROGRESS', progress);
+      }
+
+      const mAuto = accum.match(AUTO_RE);
+      if (mAuto && !finalizeTriggered) {
+        let meta = {};
+        try { meta = JSON.parse(mAuto[1]); } catch {}
+        finalizeBriefAuto(meta);
+      }
+
+      // Render “en vivo”
       if (!scheduled) {
         scheduled = true;
-        requestAnimationFrame(flush);
+        requestAnimationFrame(() => {
+          scheduled = false;
+          renderMarkdown(botDiv, accum);
+          log.scrollTop = log.scrollHeight;
+        });
       }
     } catch {}
   };
 
   es.addEventListener("done", () => {
-    flush();
+    // render final por si faltaba un fragmento
+    renderMarkdown(botDiv, accum);
     history.push({ role: "assistant", content: accum });
     sendBtn.disabled = false;
     input.focus();
@@ -88,77 +145,40 @@ function streamReply(messages) {
   });
 }
 
-/* ------------------------------ Upload file ------------------------------ */
+/* ------------------------------ Upload seed (sin Drive) ------------------------------ */
 async function uploadFile(file) {
   const fd = new FormData();
   fd.append("file", file);
-
   const r = await fetch("/api/upload", { method: "POST", body: fd });
-
-  // Intenta parsear JSON siempre (incluso en error)
-  let data = null;
-  try {
-    data = await r.json();
-  } catch {
-    data = null;
-  }
-
-  if (!r.ok) {
-    const detail = (data && (data.error || data.detail)) || `${r.status} ${r.statusText}`;
-    const e = new Error(`upload failed: ${detail}`);
-    e.status = r.status;
-    e.data = data;
-    throw e;
-  }
-
-  return data || {};
+  let data = {};
+  try { data = await r.json(); } catch {}
+  if (!r.ok) throw new Error((data && (data.error || data.detail)) || `${r.status} ${r.statusText}`);
+  return data;
 }
 
-/* ------------------------------ Send (texto + archivo) ------------------------------ */
+/* ------------------------------ Enviar ------------------------------ */
 async function send() {
   const q = input.value.trim();
   const file = fileInput.files[0];
 
-  // si no hay nada que enviar, no hacemos nada
   if (!q && !file) return;
 
-  // muestra mensaje del usuario si hay texto
   if (q) {
     addUserBubble(q);
     history.push({ role: "user", content: q });
   }
 
-  // si hay archivo, súbelo y “siembra” un resumen en la conversación
   if (file) {
-    addUserBubble(`📎 Subiendo **${file.name}**…`);
+    // Subida para semilla (no crea nada en Drive)
+    addUserBubble(`📎 Analizando **${file.name}**…`);
     try {
       const data = await uploadFile(file);
-      console.log("UPLOAD RESULT", data);
-
       const b = data.brief || {};
       const faltan = Array.isArray(b.faltantes) ? b.faltantes : [];
       const next = b.siguiente_pregunta || "¿Seguimos con la siguiente sección?";
 
-      // Si no hubo JSON pero sí texto, informa al usuario
-      if (!b || Object.keys(b).length === 0) {
-        const seedNoJson = `
-**Archivo en Drive:** [${data?.drive?.name || file.name}](${data?.drive?.link || "#"})
-
-No pude generar el JSON del brief, pero sí extraje texto. Aquí una vista previa:
-
-\`\`\`
-${(data?.textPreview || "").trim() || "—"}
-\`\`\`
-
-Continuemos con preguntas para completar el brief.
-        `.trim();
-        history.push({ role: "assistant", content: seedNoJson });
-        renderMarkdown(addBotContainer(), seedNoJson);
-      } else {
-        const seed = `
-**Archivo en Drive:** [${data.drive.name}](${data.drive.link})
-
-**Resumen preliminar:**
+      const seed = `
+**Vista previa del archivo analizado.**
 - Alcance: ${b.alcance || "—"}
 - Objetivos: ${Array.isArray(b.objetivos) && b.objetivos.length ? b.objetivos.join(", ") : "—"}
 - Audiencia: ${b.audiencia?.descripcion || "—"}
@@ -169,39 +189,44 @@ Continuemos con preguntas para completar el brief.
 
 ${next}`.trim();
 
-        history.push({ role: "assistant", content: seed });
-        renderMarkdown(addBotContainer(), seed);
-      }
+      history.push({ role: "assistant", content: seed });
+      renderMarkdown(addBotContainer(), seed);
+      // No limpiamos selectedFile; se usa luego en / api/finalize
+      // fileInput.value = "";
     } catch (err) {
-      console.error("UPLOAD ERROR", err);
-      const detail = err?.data?.error || err?.message || "Error desconocido";
-      showWarning(`No pude procesar el archivo. Detalle: ${detail}\n\nContinuemos con preguntas.`);
+      showWarning(`No pude procesar el archivo. Detalle: ${err?.message || err}`);
     }
-
-    fileInput.value = ""; // limpia el input de archivo
   }
 
-  // limpia input de texto y lanza el turno al backend
   input.value = "";
   sendBtn.disabled = true;
   streamReply(trimHistory());
 }
 
 /* ------------------------------ Welcome / Reset ------------------------------ */
-function showWelcome() { streamReply([]); }
+function showWelcome() {
+  // Mensaje visible inicial para invitar a adjuntar documento
+ // renderMarkdown(
+   // addBotContainer(),
+    //"💡 Si tienes un **documento** del proyecto (**PDF** o **DOCX**), adjúntalo desde el botón *Archivo* antes de empezar. Lo usaré para prellenar el brief."
+ // );
+  // Respuesta inicial del asistente (SSE)
+  streamReply([]);
+}
 
 function resetConversation() {
   log.innerHTML = "";
   history.length = 0;
+  finalizeTriggered = false;
+  selectedFile = null;
   showWelcome();
   input.focus();
 }
 
 /* ------------------------------ Bindings ------------------------------ */
-sendBtn.onclick =  send;
+sendBtn.onclick = send;
 if (resetBtn) resetBtn.onclick = resetConversation;
 
-// Shift+Enter = enviar  |  Enter = newline
 input.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && e.shiftKey) {
     e.preventDefault();

@@ -14,6 +14,7 @@
     "googleapis": "^160.0.0",
     "mammoth": "^1.10.0",
     "openai": "^4.57.0",
-    "pdf-parse": "^1.1.1"
+    "pdf-parse": "^1.1.1",
+    "pdfjs-dist": "^5.4.149"
   }
 }

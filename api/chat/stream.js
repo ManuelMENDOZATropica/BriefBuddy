@@ -1,91 +1,203 @@
 // api/chat/stream.js
 import OpenAI from "openai";
 
-// === Prompt & helpers (idénticos a tu server local) ===
+export const config = {
+  runtime: "edge", // 👈 Forzamos Edge Runtime (usa Web Streams, no bufferiza)
+};
+
+/* ───────────────────────────── Prompt base ───────────────────────────── */
 const SYSTEM_PROMPT = `
-Eres **BRIEF BUDDY @TRÓPICA**, un Project Manager creativo especializado en briefs publicitarios y de comunicación.
-- Personalidad: cálido, empático, cercano, profesional. Estilo: guía paso a paso, claridad, simplicidad, sin jerga.
-- Propósito: construir briefs claros y accionables para creatividad, publicidad y tecnología.
-- Secuencia fija: Contacto → Alcance → Objetivos → Audiencia → Marca → Entregables → Logística → Extras.
-- Dinámica por turno: (1) reconoce lo recibido; (2) mini-resumen en bullets de la sección actual (si aplica); (3) **una sola pregunta** para la **siguiente** sección.
-- Validaciones: emails correctos, fechas realistas, links válidos, compatibilidad tiempos/entregables.
-- Reglas: no asumas presupuestos ni fechas; no avances si faltan datos críticos; evita preguntas genéricas;
-- **Formato SIEMPRE en Markdown** (negritas, bullets, saltos de línea). Evita bloques de código salvo que sea imprescindible.
+Eres **BRIEF BUDDY @TRÓPICA**, un Project Manager creativo para briefs publicitarios/tecnológicos.
+Estilo: cálido, claro, una sola pregunta por turno. Formato SIEMPRE en Markdown (sin bloques de código salvo necesidad).
+
+Flujo de secciones (en orden):
+Contacto → Alcance → Objetivos → Audiencia → Marca → Entregables → Logística → Extras.
+
+Validaciones:
+- Emails válidos, fechas realistas, links válidos.
+- No asumas presupuesto ni fechas si no están.
+- No avances si faltan datos críticos de la sección actual, pero mantén una sola pregunta.
+- **No repitas literalmente la misma pregunta si el usuario aún no ha respondido; reformula de manera más específica o con un ejemplo.**
+
+PROTOCOLO (IMPORTANTE):
+- Al FINAL de **cada** respuesta, agrega un comentario HTML oculto con el progreso:
+  <!-- PROGRESS: {"complete": false, "missing": ["Contacto","Alcance", ...]} -->
+- Cuando el brief esté COMPLETO (sin faltantes), agrega TAMBIÉN:
+  <!-- AUTO_FINALIZE: {"category":"<Videos|Campaña|Branding|Web|Evento|Proyecto>", "client":"<NombreCliente>"} -->
+- No expliques estos comentarios. Van ocultos, fuera del contenido visible.
+
+ARRANQUE:
+- En la primera respuesta: saluda (2–3 líneas), explica qué harás y DI:
+  “Si tienes un documento del proyecto (**PDF** o **DOCX**), adjúntalo ahora y lo usaré para prellenar el brief”.
+- Luego pregunta por **Contacto** (nombre y correo) en una sola pregunta.
 `;
-const SECTIONS = ["Contacto","Alcance","Objetivos","Audiencia","Marca","Entregables","Logística","Extras"];
+
+/* ───────────────────────────── Secciones y heurísticas ───────────────────────────── */
+const SECTIONS = [
+  "Contacto",
+  "Alcance",
+  "Objetivos",
+  "Audiencia",
+  "Marca",
+  "Entregables",
+  "Logística",
+  "Extras",
+];
+
 const NEXT_QUESTION = {
   Contacto: "¿Me compartes tu nombre completo y correo?",
-  Alcance: "En 1–2 frases, ¿cómo describes el proyecto y qué piezas esperas (p. ej., video, KV, sitio, banners)?",
-  Objetivos: "¿Qué objetivos o KPIs quieres lograr (awareness, leads, ventas, engagement) y cómo medirías el éxito?",
-  Audiencia: "¿Quién es la audiencia (edad, ubicación, intereses) y en qué canales suelen estar?",
-  Marca: "¿Qué debemos saber de la marca (tono, valores, referencias, guía/brandbook o links)?",
-  Entregables: "Lista los entregables concretos con formatos o versiones (si aplica).",
-  Logística: "Fechas clave y dependencias: ¿hay deadline, presupuesto tentativo, aprobaciones o restricciones?",
-  Extras: "¿Hay riesgos, supuestos, referencias o notas adicionales que debamos considerar?"
+  Alcance:
+    "En 1–2 frases, ¿cómo describes el proyecto y qué piezas esperas (p. ej., video, KV, sitio, banners)?",
+  Objetivos:
+    "¿Qué objetivos o KPIs quieres lograr (awareness, leads, ventas, engagement) y cómo medirías el éxito?",
+  Audiencia:
+    "¿Quién es la audiencia (edad, ubicación, intereses) y en qué canales suelen estar?",
+  Marca:
+    "¿Qué debemos saber de la marca (tono, valores, referencias, guía/brandbook o links)?",
+  Entregables:
+    "Lista los entregables concretos con formatos o versiones (si aplica).",
+  Logística:
+    "Fechas clave y dependencias: ¿hay deadline, presupuesto tentativo, aprobaciones o restricciones?",
+  Extras:
+    "¿Hay riesgos, supuestos, referencias o notas adicionales que debamos considerar?",
 };
+
 const detectors = {
-  Contacto: (t) => /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i.test(t) && /\b([A-Za-zÁÉÍÓÚÑáéíóúñ]{2,}\s+[A-Za-zÁÉÍÓÚÑáéíóúñ]{2,})\b/.test(t),
-  Alcance: (t) => /\b(alcance|piezas?|entregables?|video|kv|banners?|sitio|landing|app|spot|ooh|social|camp[aá]ña)\b/i.test(t) || t.split(/\s+/).length > 20,
-  Objetivos: (t) => /\b(objetiv|kpi|meta|resultado|conversi[oó]n|awareness|engagement|ventas)\b/i.test(t),
-  Audiencia: (t) => /\b(audiencia|target|p[uú]blico|segmento|demogr[aá]fico|buyer|persona|clientes?)\b/i.test(t),
-  Marca: (t) => /\b(marca|brand|tono|valores|gu[ií]a de marca|brandbook|manual de marca|lineamientos)\b/i.test(t),
+  Contacto: (t) =>
+    /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i.test(t) &&
+    /\b([A-Za-zÁÉÍÓÚÑáéíóúñ]{2,}\s+[A-Za-zÁÉÍÓÚÑáéíóúñ]{2,})\b/.test(t),
+  Alcance: (t) =>
+    /\b(alcance|piezas?|entregables?|video|kv|banners?|sitio|landing|app|spot|ooh|social|camp[aá]ña)\b/i.test(t) ||
+    t.split(/\s+/).length > 20,
+  Objetivos: (t) =>
+    /\b(objetiv|kpi|meta|resultado|conversi[oó]n|awareness|engagement|ventas)\b/i.test(t),
+  Audiencia: (t) =>
+    /\b(audiencia|target|p[uú]blico|segmento|demogr[aá]fico|buyer|persona|clientes?)\b/i.test(t),
+  Marca: (t) =>
+    /\b(marca|brand|tono|valores|gu[ií]a de marca|brandbook|manual de marca|lineamientos)\b/i.test(t),
   Entregables: (t) => /\b(entregables?|piezas?|formatos?|resoluciones?|versiones?)\b/i.test(t),
-  Logística: (t) => /\b(\d{1,2}\/\d{1,2}(\/\d{2,4})?|\d{4}-\d{2}-\d{2}|hoy|ma[ñn]ana|semana|mes|deadline|fecha|entrega|presupuesto|budget|aprobaciones?|stakeholders?)\b/i.test(t),
+  Logística: (t) =>
+    /\b(\d{1,2}\/\d{1,2}(\/\d{2,4})?|\d{4}-\d{2}-\d{2}|hoy|ma[ñn]ana|semana|mes|deadline|fecha|entrega|presupuesto|budget|aprobaciones?|stakeholders?)\b/i.test(
+      t
+    ),
   Extras: (t) => /\b(riesgos?|supuestos?|referencias?|links?|notas?|extras?)\b/i.test(t),
 };
-const transcriptText = (messages=[]) => messages.map(m => m?.content || "").join("\n");
-const sectionCompleted = (s, txt) => { try { return detectors[s]?.(txt) || false; } catch { return false; } };
-const nextSection = (txt) => { for (const s of SECTIONS) if (!sectionCompleted(s, txt)) return s; return "Extras"; };
-function buildStateNudge(messages=[]) {
-  const txt = transcriptText(messages);
-  const current = nextSection(txt);
+
+/* ───────────────────────────── Utils ───────────────────────────── */
+const textFrom = (messages = [], roles = ["user"]) =>
+  messages.filter((m) => roles.includes(m?.role)).map((m) => m?.content || "").join("\n");
+
+const sectionCompleted = (s, userTxt) => {
+  try {
+    return detectors[s]?.(userTxt) || false;
+  } catch {
+    return false;
+  }
+};
+
+function missingSections(messages = []) {
+  const userTxt = textFrom(messages, ["user"]);
+  return SECTIONS.filter((s) => !sectionCompleted(s, userTxt));
+}
+
+function nextSection(messages = []) {
+  const miss = missingSections(messages);
+  return miss.length ? miss[0] : "Extras";
+}
+
+function guessCategoryFrom(usersTxt = "") {
+  const t = usersTxt.toLowerCase();
+  if (/\b(spot|video|mp4|film)\b/.test(t)) return "Videos";
+  if (/\b(campa[ñn]a|campaign)\b/.test(t)) return "Campaña";
+  if (/\b(branding|marca)\b/.test(t)) return "Branding";
+  if (/\b(web|sitio|landing)\b/.test(t)) return "Web";
+  if (/\b(evento|event)\b/.test(t)) return "Evento";
+  return "Proyecto";
+}
+function titleCase(s = "") {
+  return s
+    .toLowerCase()
+    .replace(/[_\-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (m) => m.toUpperCase());
+}
+function guessClientFrom(usersTxt = "") {
+  const m = usersTxt.match(/[A-Z0-9._%+-]+@([A-Z0-9.-]+)\.[A-Z]{2,}/i);
+  if (m?.[1]) {
+    const dom = (m[1].split(".")[0] || "").slice(0, 64);
+    if (dom) return titleCase(dom);
+  }
+  const m2 = usersTxt.match(/(?:Cliente|Empresa)\s*:\s*([^\n]+)/i);
+  if (m2?.[1])
+    return titleCase(
+      m2[1].replace(/\b(S\.?A\.?( de C\.?V\.?)?|SAS|SA|Ltd\.?|LLC|Studio|Estudio)\b/gi, "").trim()
+    );
+  return "Cliente";
+}
+
+function buildStateNudge(messages = []) {
+  const usersTxt = textFrom(messages, ["user"]);
+  const current = nextSection(messages);
   const idx = SECTIONS.indexOf(current);
   const prev = idx > 0 ? SECTIONS[idx - 1] : null;
 
-  const progress = prev
-    ? `Sección **${prev}** completada. Agradece lo recibido brevemente. Ahora avanza a **${current}**.`
-    : `Iniciemos en **${current}**. Pide los datos necesarios sin preguntar si desea comenzar.`;
+  const miss = missingSections(messages);
+  const complete = miss.length === 0;
+
+  const cat = guessCategoryFrom(usersTxt);
+  const cli = guessClientFrom(usersTxt);
+
+  const progressLine = prev
+    ? `Sección **${prev}** completada. Ahora avanza a **${current}**.`
+    : `Empecemos en **${current}**.`;
 
   const ask = `Acción:
-- Mini-resumen en bullets solo si ya hay datos válidos de la sección actual.
-- Formula **una sola pregunta** clara y positiva para **${current}**.
-- Nunca digas "no has compartido información" ni "¿quieres comenzar?". Avanza siempre.`;
+- Si ya hay datos válidos de la sección actual, haz un mini-resumen en bullets.
+- Formula **una sola pregunta** clara para **${current}**.
+- Si la pregunta anterior fue sobre **${current}** y no hubo nueva información del usuario, NO la repitas literal; reformúlala con un ejemplo o con campos concretos.`;
 
-  const suggested = `Pregunta sugerida: "${NEXT_QUESTION[current] || "Continuemos con la siguiente sección, ¿de acuerdo?"}"`;
+  const suggested = `Pregunta sugerida: "${NEXT_QUESTION[current] || "¿Seguimos con la siguiente sección?"}"`;
 
-  return `${progress}\n${ask}\n${suggested}`;
+  const commentsProtocol = `
+Al final de tu respuesta, agrega EXACTAMENTE:
+<!-- PROGRESS: ${JSON.stringify({ complete, missing: miss })} -->
+${complete ? `<!-- AUTO_FINALIZE: ${JSON.stringify({ category: cat, client: cli })} -->` : ""}`.trim();
+
+  return `${progressLine}\n${ask}\n${suggested}\n\n${commentsProtocol}`;
 }
 
-export default async function handler(req, res) {
+/* ───────────────────────────── Handler Edge SSE ───────────────────────────── */
+export default async function handler(req) {
   try {
-    if (req.method !== "GET") { res.status(405).send("Method Not Allowed"); return; }
-
-    // Parse historial desde query (?messages=...)
+    const { searchParams } = new URL(req.url);
     let messages = [];
-    if (req.query.messages) {
-      try { messages = JSON.parse(String(req.query.messages)); }
-      catch { messages = []; }
+    const q = searchParams.get("messages");
+    if (q) {
+      try {
+        messages = JSON.parse(q);
+      } catch {
+        messages = [];
+      }
     }
-    const isWelcome = messages.length === 0;
 
-    // Cabeceras SSE
-    res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
-    res.setHeader("Cache-Control", "no-cache, no-transform");
-    res.setHeader("Connection", "keep-alive");
-
-    // Cierre limpio
-    req.on("close", () => { try { res.end(); } catch {} });
+    const isWelcome = messages.filter((m) => m?.role === "user").length === 0;
 
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
     const stateNudge = isWelcome
-      ? `Saluda (2–3 líneas), explica brevemente qué harás y pasa DIRECTO a **Contacto** con una sola pregunta (nombre y correo). No preguntes si desea comenzar ni remarques ausencia.`
+      ? `
+Saluda (2–3 líneas), explica brevemente qué harás y di:
+“Si tienes un documento del proyecto (PDF o DOCX), adjúntalo ahora y lo usaré para prellenar el brief”.
+Pregunta por **Contacto** (nombre y correo).
+<!-- PROGRESS: ${JSON.stringify({ complete: false, missing: SECTIONS })} -->
+`.trim()
       : buildStateNudge(messages);
 
     const stream = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       stream: true,
-      temperature: 0.7,
+      temperature: 0.6,
       messages: [
         { role: "system", content: SYSTEM_PROMPT },
         { role: "system", content: stateNudge },
@@ -93,17 +205,36 @@ export default async function handler(req, res) {
       ],
     });
 
-    for await (const chunk of stream) {
-      const delta = chunk?.choices?.[0]?.delta?.content;
-      if (delta) res.write(`data: ${JSON.stringify(delta)}\n\n`);
-    }
-    res.write("event: done\ndata: [DONE]\n\n");
-    res.end();
+    const encoder = new TextEncoder();
+
+    const readable = new ReadableStream({
+      async start(controller) {
+        try {
+          for await (const chunk of stream) {
+            const delta = chunk?.choices?.[0]?.delta?.content;
+            if (delta) {
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify(delta)}\n\n`));
+            }
+          }
+          controller.enqueue(encoder.encode("event: done\ndata: [DONE]\n\n"));
+        } catch (err) {
+          console.error(err);
+          controller.enqueue(encoder.encode(`event: error\ndata: ${JSON.stringify("OpenAI error")}\n\n`));
+        } finally {
+          controller.close();
+        }
+      },
+    });
+
+    return new Response(readable, {
+      headers: {
+        "Content-Type": "text/event-stream; charset=utf-8",
+        "Cache-Control": "no-cache, no-transform",
+        Connection: "keep-alive",
+      },
+    });
   } catch (err) {
     console.error(err);
-    try {
-      res.write(`event: error\ndata: ${JSON.stringify("OpenAI error")}\n\n`);
-      res.end();
-    } catch {}
+    return new Response("Error", { status: 500 });
   }
 }
