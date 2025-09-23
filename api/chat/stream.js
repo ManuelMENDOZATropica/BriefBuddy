@@ -129,10 +129,13 @@ function guessClientFrom(usersTxt = "") {
     if (dom) return titleCase(dom);
   }
   const m2 = usersTxt.match(/(?:Cliente|Empresa)\s*:\s*([^\n]+)/i);
-  if (m2?.[1])
-    return titleCase(
-      m2[1].replace(/\b(S\.?A\.?( de C\.?V\.?)?|SAS|SA|Ltd\.?|LLC|Studio|Estudio)\b/gi, "").trim()
-    );
+  if (m2?.[1]) {
+    const cleaned = m2[1]
+      .replace(/\b(S\.?A\.?( de C\.?V\.?)?|SAS|SA|Ltd\.?|LLC|Studio|Estudio)\b/gi, "")
+      .replace(/[.,\s]+$/g, "")
+      .trim();
+    if (cleaned) return titleCase(cleaned);
+  }
   return "Cliente";
 }
 
@@ -166,6 +169,8 @@ ${complete ? `<!-- AUTO_FINALIZE: ${JSON.stringify({ category: cat, client: cli 
 
   return `${progressLine}\n${ask}\n${suggested}\n\n${commentsProtocol}`;
 }
+
+export { SECTIONS, NEXT_QUESTION, detectors, missingSections, nextSection, guessCategoryFrom, guessClientFrom, buildStateNudge };
 
 /* ───────────────────────────── Handler Edge SSE ───────────────────────────── */
 export default async function handler(req) {
