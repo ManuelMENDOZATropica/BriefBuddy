@@ -106,7 +106,7 @@ function briefPrompt(texto, nombreArchivo) {
     {
       role: "user",
       content: `
-Base en el archivo "${nombreArchivo}". Texto (truncado):
+Basado en el archivo "${nombreArchivo}". Texto (truncado):
 """
 ${(texto || "").slice(0, 12000)}
 """
