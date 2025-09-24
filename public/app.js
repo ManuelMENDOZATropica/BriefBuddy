@@ -165,9 +165,13 @@ async function send() {
 
   if (!q && !shouldUploadSeed) return;
 
+  let pendingUserEntry = null;
+
+
   if (q) {
     addUserBubble(q);
-    history.push({ role: "user", content: q });
+    pendingUserEntry = { role: "user", content: q };
+    history.push(pendingUserEntry);
   }
 
   if (shouldUploadSeed) {
@@ -192,7 +196,13 @@ async function send() {
 
 ${next}`.trim();
 
-      history.push({ role: "assistant", content: seed });
+      if (pendingUserEntry) {
+        pendingUserEntry.content = [pendingUserEntry.content, seed]
+          .filter(Boolean)
+          .join("\n\n");
+      } else {
+        history.push({ role: "user", content: seed });
+      }
       renderMarkdown(addBotContainer(), seed);
       seedUploaded = true;
       if (fileInput) fileInput.value = "";
