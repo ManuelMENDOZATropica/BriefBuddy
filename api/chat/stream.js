@@ -84,8 +84,55 @@ const detectors = {
 };
 
 /* ───────────────────────────── Utils ───────────────────────────── */
+const PREVIEW_LABELS = [...SECTIONS, "Fechas"];
+const SECTION_LABEL_PATTERN = PREVIEW_LABELS.map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
+const SEED_LINE_RE = new RegExp(`^-\\s*(?:${SECTION_LABEL_PATTERN})\\s*:\\s*(.*)$`, "i");
+
+function normalizeUserText(raw = "") {
+  if (!raw) return "";
+
+  const lines = raw.split(/\r?\n/);
+  const cleaned = [];
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+
+    if (!trimmed) {
+      cleaned.push(line);
+      continue;
+    }
+
+    if (/^\*\*Vista previa del archivo analizado\.\*\*/i.test(trimmed)) {
+      continue;
+    }
+
+    if (/^\*\*Faltantes:\*\*/i.test(trimmed)) {
+      continue;
+    }
+
+    const match = trimmed.match(SEED_LINE_RE);
+    if (match) {
+      const value = match[1].trim();
+      const collapsed = value.replace(/\s+/g, "");
+      if (collapsed && !/^[-—]+$/.test(collapsed)) {
+        cleaned.push(value);
+      }
+      continue;
+    }
+
+    cleaned.push(line);
+  }
+
+  return cleaned.join("\n");
+}
+
 const textFrom = (messages = [], roles = ["user"]) =>
-  messages.filter((m) => roles.includes(m?.role)).map((m) => m?.content || "").join("\n");
+  normalizeUserText(
+    messages
+      .filter((m) => roles.includes(m?.role))
+      .map((m) => m?.content || "")
+      .join("\n")
+  );
 
 const sectionCompleted = (s, userTxt) => {
   try {
@@ -129,10 +176,13 @@ function guessClientFrom(usersTxt = "") {
     if (dom) return titleCase(dom);
   }
   const m2 = usersTxt.match(/(?:Cliente|Empresa)\s*:\s*([^\n]+)/i);
-  if (m2?.[1])
-    return titleCase(
-      m2[1].replace(/\b(S\.?A\.?( de C\.?V\.?)?|SAS|SA|Ltd\.?|LLC|Studio|Estudio)\b/gi, "").trim()
-    );
+  if (m2?.[1]) {
+    const cleaned = m2[1]
+      .replace(/\b(S\.?A\.?( de C\.?V\.?)?|SAS|SA|Ltd\.?|LLC|Studio|Estudio)\b/gi, "")
+      .replace(/[.,\s]+$/g, "")
+      .trim();
+    if (cleaned) return titleCase(cleaned);
+  }
   return "Cliente";
 }
 
@@ -166,6 +216,8 @@ ${complete ? `<!-- AUTO_FINALIZE: ${JSON.stringify({ category: cat, client: cli 
 
   return `${progressLine}\n${ask}\n${suggested}\n\n${commentsProtocol}`;
 }
+
+export { SECTIONS, NEXT_QUESTION, detectors, missingSections, nextSection, guessCategoryFrom, guessClientFrom, buildStateNudge };
 
 /* ───────────────────────────── Handler Edge SSE ───────────────────────────── */
 export default async function handler(req) {

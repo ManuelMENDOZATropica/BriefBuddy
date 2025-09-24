@@ -14,6 +14,7 @@ const history = [];
 const MAX_TURNS = 20;
 
 let selectedFile = null;        // Se conserva para /api/finalize
+let seedUploaded = false;       // Evita reanalizar la misma semilla en cada turno
 let finalizeTriggered = false;  // Evita doble finalize
 
 // Comentarios ocultos que envía el asistente
@@ -52,6 +53,7 @@ function showInfo(msg) {
 /* ------------------------------ Archivo ------------------------------ */
 fileInput.addEventListener("change", () => {
   selectedFile = fileInput.files[0] || null;
+  seedUploaded = false;
 });
 
 /* ------------------------------ Auto-finalize ------------------------------ */
@@ -159,16 +161,20 @@ async function uploadFile(file) {
 /* ------------------------------ Enviar ------------------------------ */
 async function send() {
   const q = input.value.trim();
-  const file = fileInput.files[0];
+  const shouldUploadSeed = selectedFile && !seedUploaded;
 
-  if (!q && !file) return;
+  if (!q && !shouldUploadSeed) return;
+
+  let pendingUserEntry = null;
 
   if (q) {
     addUserBubble(q);
-    history.push({ role: "user", content: q });
+    pendingUserEntry = { role: "user", content: q };
+    history.push(pendingUserEntry);
   }
 
-  if (file) {
+  if (shouldUploadSeed) {
+    const file = selectedFile;
     // Subida para semilla (no crea nada en Drive)
     addUserBubble(`📎 Analizando **${file.name}**…`);
     try {
@@ -189,10 +195,16 @@ async function send() {
 
 ${next}`.trim();
 
-      history.push({ role: "assistant", content: seed });
+      if (pendingUserEntry) {
+        pendingUserEntry.content = [pendingUserEntry.content, seed]
+          .filter(Boolean)
+          .join("\n\n");
+      } else {
+        history.push({ role: "user", content: seed });
+      }
       renderMarkdown(addBotContainer(), seed);
-      // No limpiamos selectedFile; se usa luego en / api/finalize
-      // fileInput.value = "";
+      seedUploaded = true;
+      if (fileInput) fileInput.value = "";
     } catch (err) {
       showWarning(`No pude procesar el archivo. Detalle: ${err?.message || err}`);
     }
@@ -205,12 +217,9 @@ ${next}`.trim();
 
 /* ------------------------------ Welcome / Reset ------------------------------ */
 function showWelcome() {
-  // Mensaje visible inicial para invitar a adjuntar documento
- // renderMarkdown(
-   // addBotContainer(),
-    //"💡 Si tienes un **documento** del proyecto (**PDF** o **DOCX**), adjúntalo desde el botón *Archivo* antes de empezar. Lo usaré para prellenar el brief."
- // );
-  // Respuesta inicial del asistente (SSE)
+  // El saludo inicial lo envía el backend vía SSE. Dejamos el snippet anterior
+  // comentado por si se quiere mostrar un mensaje estático antes de la respuesta
+  // en streaming.
   streamReply([]);
 }
 
@@ -219,6 +228,8 @@ function resetConversation() {
   history.length = 0;
   finalizeTriggered = false;
   selectedFile = null;
+  seedUploaded = false;
+  if (fileInput) fileInput.value = "";
   showWelcome();
   input.focus();
 }
