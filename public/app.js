@@ -14,11 +14,145 @@ const history = [];
 const MAX_TURNS = 20;
 
 let selectedFile = null;        // Se conserva para /api/finalize
+let seedUploaded = false;       // Evita reanalizar la misma semilla en cada turno
 let finalizeTriggered = false;  // Evita doble finalize
 
 // Comentarios ocultos que envía el asistente
 const PROGRESS_RE = /<!--\s*PROGRESS\s*:\s*(\{[\s\S]*?\})\s*-->/i;
 const AUTO_RE     = /<!--\s*AUTO_FINALIZE\s*:\s*(\{[\s\S]*?\})\s*-->/i;
+
+/* ------------------------------ Seed helpers ------------------------------ */
+function flattenSeedValue(value) {
+  if (value == null) return [];
+  if (typeof value === "string") {
+    const normalized = value.replace(/\s+/g, " ").trim();
+    return normalized ? [normalized] : [];
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return [String(value)];
+  }
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => flattenSeedValue(item));
+  }
+  if (typeof value === "object") {
+    return Object.values(value).flatMap((item) => flattenSeedValue(item));
+  }
+  return [];
+}
+
+function dedupeParts(parts = []) {
+  const seen = new Set();
+  const out = [];
+  for (const part of parts) {
+    const trimmed = (part || "").trim();
+    if (!trimmed) continue;
+    const normalized = trimmed.toLowerCase();
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+    out.push(trimmed);
+  }
+  return out;
+}
+
+function formatSeedValue(value, separator = ", ") {
+  const parts = dedupeParts(flattenSeedValue(value));
+  if (!parts.length) return "";
+  return parts.join(separator);
+}
+
+function formatContact(contacto) {
+  const parts = dedupeParts(flattenSeedValue(contacto));
+  if (!parts.length) return "";
+  const emailIdx = parts.findIndex((p) => /@/.test(p));
+  if (emailIdx >= 0) {
+    const [email] = parts.splice(emailIdx, 1);
+    parts.push(email);
+  }
+  return parts.join(" · ");
+}
+
+function formatAudiencia(audiencia) {
+  if (!audiencia) return "";
+  if (typeof audiencia !== "object" || audiencia instanceof Date) {
+    return formatSeedValue(audiencia);
+  }
+  const parts = [];
+  const descripcion = formatSeedValue(audiencia.descripcion);
+  if (descripcion) parts.push(descripcion);
+  const canales = formatSeedValue(audiencia.canales);
+  if (canales) parts.push(`Canales: ${canales}`);
+  for (const [key, value] of Object.entries(audiencia)) {
+    if (key === "descripcion" || key === "canales") continue;
+    const val = formatSeedValue(value);
+    if (val) parts.push(val);
+  }
+  return dedupeParts(parts).join(". ");
+}
+
+function formatMarca(marca) {
+  if (!marca) return "";
+  if (typeof marca !== "object" || marca instanceof Date) {
+    return formatSeedValue(marca);
+  }
+  const parts = [];
+  const tono = formatSeedValue(marca.tono);
+  if (tono) parts.push(`Tono: ${tono}`);
+  const valores = formatSeedValue(marca.valores);
+  if (valores) parts.push(`Valores: ${valores}`);
+  const referencias = formatSeedValue(marca.referencias);
+  if (referencias) parts.push(`Referencias: ${referencias}`);
+  for (const [key, value] of Object.entries(marca)) {
+    if (["tono", "valores", "referencias"].includes(key)) continue;
+    const val = formatSeedValue(value);
+    if (val) parts.push(val);
+  }
+  return dedupeParts(parts).join(". ");
+}
+
+function formatLogistica(logistica) {
+  if (!logistica) return "";
+  if (typeof logistica !== "object" || logistica instanceof Date) {
+    return formatSeedValue(logistica);
+  }
+  if (Array.isArray(logistica)) {
+    return formatSeedValue(logistica);
+  }
+  const parts = [];
+  const fechas = formatSeedValue(logistica.fechas);
+  if (fechas) parts.push(fechas);
+  const presupuesto = formatSeedValue(logistica.presupuesto, " ");
+  if (presupuesto) parts.push(`Presupuesto: ${presupuesto}`);
+  const aprobaciones = formatSeedValue(logistica.aprobaciones);
+  if (aprobaciones) parts.push(`Aprobaciones: ${aprobaciones}`);
+  for (const [key, value] of Object.entries(logistica)) {
+    if (["fechas", "presupuesto", "aprobaciones"].includes(key)) continue;
+    const val = formatSeedValue(value);
+    if (val) parts.push(val);
+  }
+  return dedupeParts(parts).join("; ");
+}
+
+function formatExtras(extras) {
+  if (!extras) return "";
+  if (typeof extras !== "object" || extras instanceof Date) {
+    return formatSeedValue(extras);
+  }
+  const parts = [];
+  const riesgos = formatSeedValue(extras.riesgos);
+  if (riesgos) parts.push(`Riesgos: ${riesgos}`);
+  const notas = formatSeedValue(extras.notas);
+  if (notas) parts.push(notas);
+  for (const [key, value] of Object.entries(extras)) {
+    if (["riesgos", "notas"].includes(key)) continue;
+    const val = formatSeedValue(value);
+    if (val) parts.push(val);
+  }
+  return dedupeParts(parts).join(". ");
+}
+
+function withFallback(text) {
+  return text && text.trim() ? text.trim() : "—";
+}
 
 /* ------------------------------ UI helpers ------------------------------ */
 function addUserBubble(text) {
@@ -52,6 +186,7 @@ function showInfo(msg) {
 /* ------------------------------ Archivo ------------------------------ */
 fileInput.addEventListener("change", () => {
   selectedFile = fileInput.files[0] || null;
+  seedUploaded = false;
 });
 
 /* ------------------------------ Auto-finalize ------------------------------ */
@@ -159,16 +294,20 @@ async function uploadFile(file) {
 /* ------------------------------ Enviar ------------------------------ */
 async function send() {
   const q = input.value.trim();
-  const file = fileInput.files[0];
+  const shouldUploadSeed = selectedFile && !seedUploaded;
 
-  if (!q && !file) return;
+  if (!q && !shouldUploadSeed) return;
+
+  let pendingUserEntry = null;
 
   if (q) {
     addUserBubble(q);
-    history.push({ role: "user", content: q });
+    pendingUserEntry = { role: "user", content: q };
+    history.push(pendingUserEntry);
   }
 
-  if (file) {
+  if (shouldUploadSeed) {
+    const file = selectedFile;
     // Subida para semilla (no crea nada en Drive)
     addUserBubble(`📎 Analizando **${file.name}**…`);
     try {
@@ -177,23 +316,61 @@ async function send() {
       const faltan = Array.isArray(b.faltantes) ? b.faltantes : [];
       const next = b.siguiente_pregunta || "¿Seguimos con la siguiente sección?";
 
+      const preview = {
+        contacto: withFallback(formatContact(b.contacto)),
+        alcance: withFallback(formatSeedValue(b.alcance)),
+        objetivos: withFallback(formatSeedValue(b.objetivos)),
+        audiencia: withFallback(formatAudiencia(b.audiencia)),
+        marca: withFallback(formatMarca(b.marca)),
+        entregables: withFallback(formatSeedValue(b.entregables)),
+        logistica: withFallback(formatLogistica(b.logistica)),
+        extras: withFallback(formatExtras(b.extras)),
+      };
+
+      const hasSeedContent = Object.values(preview).some((value) => value && value !== "—");
+
+      console.log("[seed] Resumen generado desde el archivo", {
+        archivo: file.name,
+        preview,
+        faltantes: faltan,
+        siguientePregunta: next,
+        brief: b,
+        textoExtraido: data.textPreview,
+      });
+
+      if (!hasSeedContent) {
+        console.warn(
+          `[seed] No se detectó contenido aprovechable en ${file.name}. Revisa los logs del backend para más detalles.`
+        );
+      }
+
       const seed = `
 **Vista previa del archivo analizado.**
-- Alcance: ${b.alcance || "—"}
-- Objetivos: ${Array.isArray(b.objetivos) && b.objetivos.length ? b.objetivos.join(", ") : "—"}
-- Audiencia: ${b.audiencia?.descripcion || "—"}
-- Entregables: ${Array.isArray(b.entregables) && b.entregables.length ? b.entregables.join(", ") : "—"}
-- Fechas: ${Array.isArray(b.logistica?.fechas) && b.logistica.fechas.length ? b.logistica.fechas.join(", ") : "—"}
+- Contacto: ${preview.contacto}
+- Alcance: ${preview.alcance}
+- Objetivos: ${preview.objetivos}
+- Audiencia: ${preview.audiencia}
+- Marca: ${preview.marca}
+- Entregables: ${preview.entregables}
+- Logística: ${preview.logistica}
+- Extras: ${preview.extras}
 
 **Faltantes:** ${faltan.length ? faltan.join(", ") : "—"}
 
 ${next}`.trim();
 
-      history.push({ role: "assistant", content: seed });
+      if (pendingUserEntry) {
+        pendingUserEntry.content = [pendingUserEntry.content, seed]
+          .filter(Boolean)
+          .join("\n\n");
+      } else {
+        history.push({ role: "user", content: seed });
+      }
       renderMarkdown(addBotContainer(), seed);
-      // No limpiamos selectedFile; se usa luego en / api/finalize
-      // fileInput.value = "";
+      seedUploaded = true;
+      if (fileInput) fileInput.value = "";
     } catch (err) {
+      console.error("[seed] Error al procesar el archivo", err);
       showWarning(`No pude procesar el archivo. Detalle: ${err?.message || err}`);
     }
   }
@@ -205,12 +382,9 @@ ${next}`.trim();
 
 /* ------------------------------ Welcome / Reset ------------------------------ */
 function showWelcome() {
-  // Mensaje visible inicial para invitar a adjuntar documento
- // renderMarkdown(
-   // addBotContainer(),
-    //"💡 Si tienes un **documento** del proyecto (**PDF** o **DOCX**), adjúntalo desde el botón *Archivo* antes de empezar. Lo usaré para prellenar el brief."
- // );
-  // Respuesta inicial del asistente (SSE)
+  // El saludo inicial lo envía el backend vía SSE. Dejamos el snippet anterior
+  // comentado por si se quiere mostrar un mensaje estático antes de la respuesta
+  // en streaming.
   streamReply([]);
 }
 
@@ -219,6 +393,8 @@ function resetConversation() {
   history.length = 0;
   finalizeTriggered = false;
   selectedFile = null;
+  seedUploaded = false;
+  if (fileInput) fileInput.value = "";
   showWelcome();
   input.focus();
 }
