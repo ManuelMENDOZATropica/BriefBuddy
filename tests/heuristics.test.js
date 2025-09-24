@@ -60,6 +60,7 @@ test("missingSections ignores seed placeholders with em dashes", () => {
 - Logística: —
 - Extras: —
 
+
 **Faltantes:** Alcance, Objetivos, Audiencia, Marca, Entregables, Logística, Extras
 
 ¿Seguimos con la siguiente sección?
@@ -85,12 +86,14 @@ test("missingSections leverages seed values when provided", () => {
 - Entregables: Videos 30s y versiones cuadradas.
 - Logística: Deadline 2024-12-01 con presupuesto tentativo y aprobaciones clave.
 - Extras: Riesgos mínimos y referencias https://ejemplo.com.
+
       `.trim(),
     },
   ];
 
   const missing = missingSections(messages);
   assert.deepStrictEqual(missing, []);
+
 });
 
 test("guessCategoryFrom infers categories from keywords", () => {

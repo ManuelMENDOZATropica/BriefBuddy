@@ -300,6 +300,7 @@ async function send() {
 
   let pendingUserEntry = null;
 
+
   if (q) {
     addUserBubble(q);
     pendingUserEntry = { role: "user", content: q };
