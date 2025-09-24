@@ -21,6 +21,139 @@ let finalizeTriggered = false;  // Evita doble finalize
 const PROGRESS_RE = /<!--\s*PROGRESS\s*:\s*(\{[\s\S]*?\})\s*-->/i;
 const AUTO_RE     = /<!--\s*AUTO_FINALIZE\s*:\s*(\{[\s\S]*?\})\s*-->/i;
 
+/* ------------------------------ Seed helpers ------------------------------ */
+function flattenSeedValue(value) {
+  if (value == null) return [];
+  if (typeof value === "string") {
+    const normalized = value.replace(/\s+/g, " ").trim();
+    return normalized ? [normalized] : [];
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return [String(value)];
+  }
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => flattenSeedValue(item));
+  }
+  if (typeof value === "object") {
+    return Object.values(value).flatMap((item) => flattenSeedValue(item));
+  }
+  return [];
+}
+
+function dedupeParts(parts = []) {
+  const seen = new Set();
+  const out = [];
+  for (const part of parts) {
+    const trimmed = (part || "").trim();
+    if (!trimmed) continue;
+    const normalized = trimmed.toLowerCase();
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+    out.push(trimmed);
+  }
+  return out;
+}
+
+function formatSeedValue(value, separator = ", ") {
+  const parts = dedupeParts(flattenSeedValue(value));
+  if (!parts.length) return "";
+  return parts.join(separator);
+}
+
+function formatContact(contacto) {
+  const parts = dedupeParts(flattenSeedValue(contacto));
+  if (!parts.length) return "";
+  const emailIdx = parts.findIndex((p) => /@/.test(p));
+  if (emailIdx >= 0) {
+    const [email] = parts.splice(emailIdx, 1);
+    parts.push(email);
+  }
+  return parts.join(" · ");
+}
+
+function formatAudiencia(audiencia) {
+  if (!audiencia) return "";
+  if (typeof audiencia !== "object" || audiencia instanceof Date) {
+    return formatSeedValue(audiencia);
+  }
+  const parts = [];
+  const descripcion = formatSeedValue(audiencia.descripcion);
+  if (descripcion) parts.push(descripcion);
+  const canales = formatSeedValue(audiencia.canales);
+  if (canales) parts.push(`Canales: ${canales}`);
+  for (const [key, value] of Object.entries(audiencia)) {
+    if (key === "descripcion" || key === "canales") continue;
+    const val = formatSeedValue(value);
+    if (val) parts.push(val);
+  }
+  return dedupeParts(parts).join(". ");
+}
+
+function formatMarca(marca) {
+  if (!marca) return "";
+  if (typeof marca !== "object" || marca instanceof Date) {
+    return formatSeedValue(marca);
+  }
+  const parts = [];
+  const tono = formatSeedValue(marca.tono);
+  if (tono) parts.push(`Tono: ${tono}`);
+  const valores = formatSeedValue(marca.valores);
+  if (valores) parts.push(`Valores: ${valores}`);
+  const referencias = formatSeedValue(marca.referencias);
+  if (referencias) parts.push(`Referencias: ${referencias}`);
+  for (const [key, value] of Object.entries(marca)) {
+    if (["tono", "valores", "referencias"].includes(key)) continue;
+    const val = formatSeedValue(value);
+    if (val) parts.push(val);
+  }
+  return dedupeParts(parts).join(". ");
+}
+
+function formatLogistica(logistica) {
+  if (!logistica) return "";
+  if (typeof logistica !== "object" || logistica instanceof Date) {
+    return formatSeedValue(logistica);
+  }
+  if (Array.isArray(logistica)) {
+    return formatSeedValue(logistica);
+  }
+  const parts = [];
+  const fechas = formatSeedValue(logistica.fechas);
+  if (fechas) parts.push(fechas);
+  const presupuesto = formatSeedValue(logistica.presupuesto, " ");
+  if (presupuesto) parts.push(`Presupuesto: ${presupuesto}`);
+  const aprobaciones = formatSeedValue(logistica.aprobaciones);
+  if (aprobaciones) parts.push(`Aprobaciones: ${aprobaciones}`);
+  for (const [key, value] of Object.entries(logistica)) {
+    if (["fechas", "presupuesto", "aprobaciones"].includes(key)) continue;
+    const val = formatSeedValue(value);
+    if (val) parts.push(val);
+  }
+  return dedupeParts(parts).join("; ");
+}
+
+function formatExtras(extras) {
+  if (!extras) return "";
+  if (typeof extras !== "object" || extras instanceof Date) {
+    return formatSeedValue(extras);
+  }
+  const parts = [];
+  const riesgos = formatSeedValue(extras.riesgos);
+  if (riesgos) parts.push(`Riesgos: ${riesgos}`);
+  const notas = formatSeedValue(extras.notas);
+  if (notas) parts.push(notas);
+  for (const [key, value] of Object.entries(extras)) {
+    if (["riesgos", "notas"].includes(key)) continue;
+    const val = formatSeedValue(value);
+    if (val) parts.push(val);
+  }
+  return dedupeParts(parts).join(". ");
+}
+
+function withFallback(text) {
+  return text && text.trim() ? text.trim() : "—";
+}
+
 /* ------------------------------ UI helpers ------------------------------ */
 function addUserBubble(text) {
   const div = document.createElement("div");
@@ -163,7 +296,6 @@ async function send() {
   const q = input.value.trim();
   const shouldUploadSeed = selectedFile && !seedUploaded;
 
-
   if (!q && !shouldUploadSeed) return;
 
   let pendingUserEntry = null;
@@ -187,11 +319,14 @@ async function send() {
 
       const seed = `
 **Vista previa del archivo analizado.**
-- Alcance: ${b.alcance || "—"}
-- Objetivos: ${Array.isArray(b.objetivos) && b.objetivos.length ? b.objetivos.join(", ") : "—"}
-- Audiencia: ${b.audiencia?.descripcion || "—"}
-- Entregables: ${Array.isArray(b.entregables) && b.entregables.length ? b.entregables.join(", ") : "—"}
-- Fechas: ${Array.isArray(b.logistica?.fechas) && b.logistica.fechas.length ? b.logistica.fechas.join(", ") : "—"}
+- Contacto: ${withFallback(formatContact(b.contacto))}
+- Alcance: ${withFallback(formatSeedValue(b.alcance))}
+- Objetivos: ${withFallback(formatSeedValue(b.objetivos))}
+- Audiencia: ${withFallback(formatAudiencia(b.audiencia))}
+- Marca: ${withFallback(formatMarca(b.marca))}
+- Entregables: ${withFallback(formatSeedValue(b.entregables))}
+- Logística: ${withFallback(formatLogistica(b.logistica))}
+- Extras: ${withFallback(formatExtras(b.extras))}
 
 **Faltantes:** ${faltan.length ? faltan.join(", ") : "—"}
 

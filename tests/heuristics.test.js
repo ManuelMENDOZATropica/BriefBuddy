@@ -51,12 +51,15 @@ test("missingSections ignores seed placeholders with em dashes", () => {
       role: "user",
       content: `
 **Vista previa del archivo analizado.**
+- Contacto: —
 - Alcance: —
 - Objetivos: —
 - Audiencia: —
 - Marca: —
 - Entregables: —
 - Logística: —
+- Extras: —
+
 
 **Faltantes:** Alcance, Objetivos, Audiencia, Marca, Entregables, Logística, Extras
 
@@ -75,22 +78,22 @@ test("missingSections leverages seed values when provided", () => {
       role: "user",
       content: `
 **Vista previa del archivo analizado.**
+- Contacto: Juan Pérez · juan@example.com
 - Alcance: Necesitamos un video y banners para campaña digital.
 - Objetivos: Aumentar awareness y conversiones.
 - Audiencia: Público joven urbano en redes sociales.
+- Marca: Tono: alegre. Valores: innovación.
 - Entregables: Videos 30s y versiones cuadradas.
-- Fechas: Deadline 2024-12-01 con aprobación semanal.
+- Logística: Deadline 2024-12-01 con presupuesto tentativo y aprobaciones clave.
+- Extras: Riesgos mínimos y referencias https://ejemplo.com.
+
       `.trim(),
     },
   ];
 
   const missing = missingSections(messages);
-  assert.ok(missing.includes("Contacto"));
-  assert.ok(!missing.includes("Alcance"));
-  assert.ok(!missing.includes("Objetivos"));
-  assert.ok(!missing.includes("Audiencia"));
-  assert.ok(!missing.includes("Entregables"));
-  assert.ok(!missing.includes("Logística"));
+  assert.deepStrictEqual(missing, []);
+
 });
 
 test("guessCategoryFrom infers categories from keywords", () => {
