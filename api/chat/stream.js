@@ -86,7 +86,9 @@ const detectors = {
 /* ───────────────────────────── Utils ───────────────────────────── */
 const PREVIEW_LABELS = [...SECTIONS, "Fechas"];
 const SECTION_LABEL_PATTERN = PREVIEW_LABELS.map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
+
 const SEED_LINE_RE = new RegExp(`^-\\s*(${SECTION_LABEL_PATTERN})\\s*:\\s*(.*)$`, "i");
+
 
 function normalizeUserText(raw = "") {
   if (!raw) return "";
@@ -112,12 +114,14 @@ function normalizeUserText(raw = "") {
 
     const match = trimmed.match(SEED_LINE_RE);
     if (match) {
+
       let label = match[1].trim();
       const value = match[2].trim();
       const collapsed = value.replace(/\s+/g, "");
       if (collapsed && !/^[-—]+$/.test(collapsed)) {
         if (/^fechas$/i.test(label)) label = "Logística";
         cleaned.push(`${label}: ${value}`);
+
       }
       continue;
     }

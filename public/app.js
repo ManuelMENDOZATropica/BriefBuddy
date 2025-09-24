@@ -296,9 +296,11 @@ async function send() {
   const q = input.value.trim();
   const shouldUploadSeed = selectedFile && !seedUploaded;
 
+
   if (!q && !shouldUploadSeed) return;
 
   let pendingUserEntry = null;
+
 
   if (q) {
     addUserBubble(q);
@@ -354,6 +356,7 @@ async function send() {
 - Entregables: ${preview.entregables}
 - Logística: ${preview.logistica}
 - Extras: ${preview.extras}
+
 
 **Faltantes:** ${faltan.length ? faltan.join(", ") : "—"}
 
