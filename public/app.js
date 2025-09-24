@@ -163,9 +163,11 @@ async function send() {
   const q = input.value.trim();
   const shouldUploadSeed = selectedFile && !seedUploaded;
 
+
   if (!q && !shouldUploadSeed) return;
 
   let pendingUserEntry = null;
+
 
   if (q) {
     addUserBubble(q);
