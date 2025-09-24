@@ -137,7 +137,24 @@ export default async function handler(req, res) {
     const { file } = await parseMultipart(req);
     if (!file) return res.status(400).json({ error: "No file" });
 
+    const size = file?.buffer?.length ?? 0;
+    console.log(
+      `[upload] Archivo recibido: ${file.filename} (${file.mimeType || "sin mime"}) · ${size} bytes`
+    );
+
     const text = await extractText(file);
+
+    if (!text || !text.trim() || text.startsWith("⚠️")) {
+      console.warn(
+        `[upload] Texto extraído vacío o inválido para ${file.filename}.` +
+          ` Vista previa: ${String(text || "").slice(0, 160).replace(/\s+/g, " ")}`
+      );
+    } else {
+      console.log(
+        `[upload] Texto extraído (${text.length} caracteres) para ${file.filename}:` +
+          ` "${text.slice(0, 160).replace(/\s+/g, " ")}"`
+      );
+    }
 
     // Opcional: semilla de brief para UX (rápida)
     let brief = {};
@@ -151,8 +168,12 @@ export default async function handler(req, res) {
       });
       brief = JSON.parse(ai.choices?.[0]?.message?.content || "{}");
     } catch (e) {
-      console.warn("seed brief warn:", e?.message || e);
+      console.warn("[upload] seed brief warn:", e?.message || e);
       brief = {};
+    }
+
+    if (!brief || Object.keys(brief).length === 0) {
+      console.warn(`[upload] El modelo no devolvió datos de brief para ${file.filename}.`);
     }
 
     // Limpieza tmp de formidable

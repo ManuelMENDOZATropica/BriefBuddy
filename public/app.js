@@ -296,6 +296,7 @@ async function send() {
   const q = input.value.trim();
   const shouldUploadSeed = selectedFile && !seedUploaded;
 
+
   if (!q && !shouldUploadSeed) return;
 
   let pendingUserEntry = null;
@@ -317,16 +318,45 @@ async function send() {
       const faltan = Array.isArray(b.faltantes) ? b.faltantes : [];
       const next = b.siguiente_pregunta || "¿Seguimos con la siguiente sección?";
 
+      const preview = {
+        contacto: withFallback(formatContact(b.contacto)),
+        alcance: withFallback(formatSeedValue(b.alcance)),
+        objetivos: withFallback(formatSeedValue(b.objetivos)),
+        audiencia: withFallback(formatAudiencia(b.audiencia)),
+        marca: withFallback(formatMarca(b.marca)),
+        entregables: withFallback(formatSeedValue(b.entregables)),
+        logistica: withFallback(formatLogistica(b.logistica)),
+        extras: withFallback(formatExtras(b.extras)),
+      };
+
+      const hasSeedContent = Object.values(preview).some((value) => value && value !== "—");
+
+      console.log("[seed] Resumen generado desde el archivo", {
+        archivo: file.name,
+        preview,
+        faltantes: faltan,
+        siguientePregunta: next,
+        brief: b,
+        textoExtraido: data.textPreview,
+      });
+
+      if (!hasSeedContent) {
+        console.warn(
+          `[seed] No se detectó contenido aprovechable en ${file.name}. Revisa los logs del backend para más detalles.`
+        );
+      }
+
       const seed = `
 **Vista previa del archivo analizado.**
-- Contacto: ${withFallback(formatContact(b.contacto))}
-- Alcance: ${withFallback(formatSeedValue(b.alcance))}
-- Objetivos: ${withFallback(formatSeedValue(b.objetivos))}
-- Audiencia: ${withFallback(formatAudiencia(b.audiencia))}
-- Marca: ${withFallback(formatMarca(b.marca))}
-- Entregables: ${withFallback(formatSeedValue(b.entregables))}
-- Logística: ${withFallback(formatLogistica(b.logistica))}
-- Extras: ${withFallback(formatExtras(b.extras))}
+- Contacto: ${preview.contacto}
+- Alcance: ${preview.alcance}
+- Objetivos: ${preview.objetivos}
+- Audiencia: ${preview.audiencia}
+- Marca: ${preview.marca}
+- Entregables: ${preview.entregables}
+- Logística: ${preview.logistica}
+- Extras: ${preview.extras}
+
 
 **Faltantes:** ${faltan.length ? faltan.join(", ") : "—"}
 
@@ -343,6 +373,7 @@ ${next}`.trim();
       seedUploaded = true;
       if (fileInput) fileInput.value = "";
     } catch (err) {
+      console.error("[seed] Error al procesar el archivo", err);
       showWarning(`No pude procesar el archivo. Detalle: ${err?.message || err}`);
     }
   }
