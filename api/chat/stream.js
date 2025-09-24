@@ -84,8 +84,55 @@ const detectors = {
 };
 
 /* ───────────────────────────── Utils ───────────────────────────── */
+const PREVIEW_LABELS = [...SECTIONS, "Fechas"];
+const SECTION_LABEL_PATTERN = PREVIEW_LABELS.map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
+const SEED_LINE_RE = new RegExp(`^-\\s*(?:${SECTION_LABEL_PATTERN})\\s*:\\s*(.*)$`, "i");
+
+function normalizeUserText(raw = "") {
+  if (!raw) return "";
+
+  const lines = raw.split(/\r?\n/);
+  const cleaned = [];
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+
+    if (!trimmed) {
+      cleaned.push(line);
+      continue;
+    }
+
+    if (/^\*\*Vista previa del archivo analizado\.\*\*/i.test(trimmed)) {
+      continue;
+    }
+
+    if (/^\*\*Faltantes:\*\*/i.test(trimmed)) {
+      continue;
+    }
+
+    const match = trimmed.match(SEED_LINE_RE);
+    if (match) {
+      const value = match[1].trim();
+      const collapsed = value.replace(/\s+/g, "");
+      if (collapsed && !/^[-—]+$/.test(collapsed)) {
+        cleaned.push(value);
+      }
+      continue;
+    }
+
+    cleaned.push(line);
+  }
+
+  return cleaned.join("\n");
+}
+
 const textFrom = (messages = [], roles = ["user"]) =>
-  messages.filter((m) => roles.includes(m?.role)).map((m) => m?.content || "").join("\n");
+  normalizeUserText(
+    messages
+      .filter((m) => roles.includes(m?.role))
+      .map((m) => m?.content || "")
+      .join("\n")
+  );
 
 const sectionCompleted = (s, userTxt) => {
   try {

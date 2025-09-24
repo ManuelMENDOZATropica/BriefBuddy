@@ -45,6 +45,54 @@ test("missingSections omits completed sections", () => {
   );
 });
 
+test("missingSections ignores seed placeholders with em dashes", () => {
+  const messages = [
+    {
+      role: "user",
+      content: `
+**Vista previa del archivo analizado.**
+- Alcance: —
+- Objetivos: —
+- Audiencia: —
+- Marca: —
+- Entregables: —
+- Logística: —
+
+**Faltantes:** Alcance, Objetivos, Audiencia, Marca, Entregables, Logística, Extras
+
+¿Seguimos con la siguiente sección?
+      `.trim(),
+    },
+  ];
+
+  const missing = missingSections(messages);
+  assert.deepStrictEqual(missing, SECTIONS);
+});
+
+test("missingSections leverages seed values when provided", () => {
+  const messages = [
+    {
+      role: "user",
+      content: `
+**Vista previa del archivo analizado.**
+- Alcance: Necesitamos un video y banners para campaña digital.
+- Objetivos: Aumentar awareness y conversiones.
+- Audiencia: Público joven urbano en redes sociales.
+- Entregables: Videos 30s y versiones cuadradas.
+- Fechas: Deadline 2024-12-01 con aprobación semanal.
+      `.trim(),
+    },
+  ];
+
+  const missing = missingSections(messages);
+  assert.ok(missing.includes("Contacto"));
+  assert.ok(!missing.includes("Alcance"));
+  assert.ok(!missing.includes("Objetivos"));
+  assert.ok(!missing.includes("Audiencia"));
+  assert.ok(!missing.includes("Entregables"));
+  assert.ok(!missing.includes("Logística"));
+});
+
 test("guessCategoryFrom infers categories from keywords", () => {
   assert.equal(guessCategoryFrom("Produciremos un spot de video para TV"), "Videos");
   assert.equal(guessCategoryFrom("Es una campaña integral para la marca"), "Campaña");
