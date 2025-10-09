@@ -251,7 +251,7 @@ export default async function handler(req) {
 
     const stateNudge = isWelcome
       ? `
-Saluda (2–3 líneas), explica brevemente qué harás y di:
+Saluda (2–3 líneas), explica brevemente qué harás y quien eres y di:
 “Si tienes un documento del proyecto (PDF o DOCX), adjúntalo ahora y lo usaré para prellenar el brief”.
 Pregunta por **Contacto** (nombre y correo).
 <!-- PROGRESS: ${JSON.stringify({ complete: false, missing: SECTIONS })} -->
