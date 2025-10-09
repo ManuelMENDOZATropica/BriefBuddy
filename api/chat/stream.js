@@ -252,6 +252,17 @@ Pregunta por **Contacto** (nombre y correo).
 `.trim()
       : buildStateNudge(messages);
 
+    const conversationMessages = isWelcome
+      ? [
+          ...messages,
+          {
+            role: "user",
+            content:
+              "Inicia la conversación con el saludo de bienvenida y continúa siguiendo el protocolo dado.",
+          },
+        ]
+      : messages;
+
     const stream = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       stream: true,
@@ -259,7 +270,7 @@ Pregunta por **Contacto** (nombre y correo).
       messages: [
         { role: "system", content: SYSTEM_PROMPT },
         { role: "system", content: stateNudge },
-        ...messages,
+        ...conversationMessages,
       ],
     });
 
