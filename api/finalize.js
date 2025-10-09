@@ -4,6 +4,8 @@ import OpenAI from "openai";
 import formidable from "formidable";
 import fs from "fs/promises";
 import path from "node:path";
+import JSZip from "jszip";
+import { DOMParser, XMLSerializer } from "@xmldom/xmldom";
 
 export const config = {
   api: { bodyParser: false },
@@ -131,6 +133,321 @@ ${faltan.length ? faltan.map((f) => `- ${f}`).join("\n") : "—"}
 ## Siguiente pregunta
 ${b.siguiente_pregunta || "—"}
 `;
+}
+
+/* ───────────── DOCX helpers ───────────── */
+const WORD_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+
+function flattenList(value) {
+  if (value == null) return [];
+  if (typeof value === "string") {
+    const normalized = value.replace(/\s+/g, " ").trim();
+    return normalized ? [normalized] : [];
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return [String(value)];
+  }
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => flattenList(item));
+  }
+  if (typeof value === "object") {
+    return Object.values(value).flatMap((item) => flattenList(item));
+  }
+  return [];
+}
+
+function dedupeStrings(values = []) {
+  const seen = new Set();
+  const out = [];
+  for (const raw of values) {
+    const value = String(raw || "").trim();
+    if (!value) continue;
+    const key = value.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(value);
+  }
+  return out;
+}
+
+function normalizeList(value) {
+  return dedupeStrings(flattenList(value));
+}
+
+function bulletList(parts) {
+  const normalized = normalizeList(parts);
+  if (!normalized.length) return "—";
+  return normalized.map((item) => `• ${item}`).join("\n");
+}
+
+function inlineList(parts) {
+  const normalized = normalizeList(parts);
+  return normalized.length ? normalized.join(" · ") : "—";
+}
+
+function formatContactDocx(contacto) {
+  const normalized = normalizeList(contacto);
+  if (!normalized.length) return "—";
+  const emails = normalized.filter((item) => /@/.test(item));
+  const others = normalized.filter((item) => !/@/.test(item));
+  return [...others, ...emails].join(" · ");
+}
+
+function formatAudienciaDocx(audiencia) {
+  if (!audiencia || typeof audiencia !== "object") {
+    return bulletList(audiencia);
+  }
+  const parts = [];
+  if (audiencia.descripcion) parts.push(audiencia.descripcion);
+  const canales = normalizeList(audiencia.canales);
+  if (canales.length) parts.push(`Canales: ${canales.join(", ")}`);
+  for (const [key, value] of Object.entries(audiencia)) {
+    if (key === "descripcion" || key === "canales") continue;
+    const values = normalizeList(value);
+    if (!values.length) continue;
+    const label = key
+      .replace(/[_-]+/g, " ")
+      .replace(/\b\w/g, (m) => m.toUpperCase());
+    parts.push(`${label}: ${values.join(", ")}`);
+  }
+  return bulletList(parts);
+}
+
+function formatMarcaDocx(marca) {
+  if (!marca || typeof marca !== "object") {
+    return bulletList(marca);
+  }
+  const parts = [];
+  const tonos = normalizeList(marca.tono);
+  if (tonos.length) parts.push(`Tono: ${tonos.join(", ")}`);
+  const valores = normalizeList(marca.valores);
+  if (valores.length) parts.push(`Valores: ${valores.join(", ")}`);
+  const referencias = normalizeList(marca.referencias);
+  if (referencias.length) parts.push(`Referencias: ${referencias.join(", ")}`);
+  for (const [key, value] of Object.entries(marca)) {
+    if (["tono", "valores", "referencias"].includes(key)) continue;
+    const values = normalizeList(value);
+    if (!values.length) continue;
+    const label = key
+      .replace(/[_-]+/g, " ")
+      .replace(/\b\w/g, (m) => m.toUpperCase());
+    parts.push(`${label}: ${values.join(", ")}`);
+  }
+  return bulletList(parts);
+}
+
+function getParagraphText(p) {
+  const texts = p.getElementsByTagName("w:t");
+  let out = "";
+  for (let i = 0; i < texts.length; i += 1) {
+    out += texts.item(i)?.textContent || "";
+  }
+  return out;
+}
+
+function setParagraphText(p, text) {
+  const doc = p.ownerDocument;
+  const pPr = p.getElementsByTagName("w:pPr").item(0);
+  const pPrClone = pPr ? pPr.cloneNode(true) : null;
+  while (p.firstChild) {
+    p.removeChild(p.firstChild);
+  }
+  if (pPrClone) p.appendChild(pPrClone);
+  const run = doc.createElementNS(WORD_NS, "w:r");
+  const lines = String(text ?? "—").split(/\r?\n/);
+  lines.forEach((line, idx) => {
+    const t = doc.createElementNS(WORD_NS, "w:t");
+    const safe = line === "" ? " " : line;
+    if (/^\s|\s$/.test(safe)) {
+      t.setAttribute("xml:space", "preserve");
+    }
+    t.textContent = safe;
+    run.appendChild(t);
+    if (idx < lines.length - 1) {
+      const br = doc.createElementNS(WORD_NS, "w:br");
+      run.appendChild(br);
+    }
+  });
+  p.appendChild(run);
+}
+
+function setCellValue(cell, value) {
+  const doc = cell.ownerDocument;
+  const paragraphs = Array.from(cell.getElementsByTagName("w:p"));
+  if (!paragraphs.length) {
+    const p = doc.createElementNS(WORD_NS, "w:p");
+    cell.appendChild(p);
+    setParagraphText(p, value);
+    return;
+  }
+  paragraphs.forEach((para, idx) => {
+    if (idx === 0) {
+      setParagraphText(para, value);
+    } else {
+      cell.removeChild(para);
+    }
+  });
+}
+
+function normalizeLabel(text = "") {
+  return text.replace(/[\s\u00a0]+/g, " ").trim().toLowerCase();
+}
+
+async function buildDocxBriefBuffer({ brief, label, clientName }) {
+  try {
+    const templatePath = path.join(process.cwd(), "assets", "Brief template.docx");
+    const template = await fs.readFile(templatePath);
+    const zip = await JSZip.loadAsync(template);
+    const xml = await zip.file("word/document.xml").async("string");
+    const doc = new DOMParser().parseFromString(xml, "application/xml");
+
+    const contacto = formatContactDocx(brief?.contacto);
+    const clientLabel = clientName || inferClientName(brief, "");
+    const alcanceInline = inlineList([brief?.alcance]);
+    const objetivosList = normalizeList(brief?.objetivos);
+    const objetivosBullets = objetivosList.length ? objetivosList.map((o) => `• ${o}`).join("\n") : "—";
+    const objetivosInline = objetivosList.length ? objetivosList.join(" · ") : alcanceInline;
+    const audience = formatAudienciaDocx(brief?.audiencia);
+    const brand = formatMarcaDocx(brief?.marca);
+    const deliverables = bulletList(brief?.entregables);
+    const notasExtras = normalizeList(brief?.extras?.notas);
+    const riesgosExtras = normalizeList(brief?.extras?.riesgos);
+    const fechas = normalizeList(brief?.logistica?.fechas);
+    const aprobaciones = normalizeList(brief?.logistica?.aprobaciones);
+    const presupuestoList = normalizeList(brief?.logistica?.presupuesto);
+    const duracionList = normalizeList(brief?.logistica?.duracion);
+
+    const businessParts = [];
+    if (alcanceInline !== "—") businessParts.push(`Alcance: ${alcanceInline}`);
+    if (objetivosInline && objetivosInline !== "—") {
+      businessParts.push(`Objetivos: ${objetivosInline}`);
+    }
+    if (fechas.length) businessParts.push(`Fechas clave: ${fechas.join(", ")}`);
+    if (presupuestoList.length) businessParts.push(`Presupuesto: ${presupuestoList.join(", ")}`);
+    if (aprobaciones.length) businessParts.push(`Aprobaciones: ${aprobaciones.join(", ")}`);
+    if (notasExtras.length) businessParts.push(`Notas: ${notasExtras.join("; ")}`);
+    if (riesgosExtras.length) businessParts.push(`Riesgos: ${riesgosExtras.join(", ")}`);
+    const businessContext = bulletList(businessParts);
+
+    const briefTweet = objetivosInline && objetivosInline !== "—" ? objetivosInline : alcanceInline;
+    const consumerInsight = bulletList([
+      notasExtras.length ? `Notas clave: ${notasExtras.join("; ")}` : null,
+      audience !== "—" ? `Audiencia: ${audience.replace(/^[•\s]+/, "")}` : null,
+    ]);
+    const culturalContext = bulletList([
+      notasExtras.length ? notasExtras : null,
+      riesgosExtras.length ? riesgosExtras.map((r) => `Riesgo: ${r}`) : null,
+    ]);
+    const competitiveDiff = bulletList([
+      normalizeList(brief?.marca?.valores).length
+        ? `Valores clave: ${normalizeList(brief?.marca?.valores).join(", ")}`
+        : null,
+      normalizeList(brief?.marca?.referencias).length
+        ? `Referencias: ${normalizeList(brief?.marca?.referencias).join(", ")}`
+        : null,
+    ]);
+    const keyMessage = objetivosList.length ? objetivosList[0] : alcanceInline;
+    const emotionalTerritory = inlineList([brief?.marca?.tono]);
+    const campaignTagline = inlineList([
+      normalizeList(brief?.extras?.notas).slice(0, 1),
+    ]);
+
+    const tableFillers = [
+      { key: "project name", value: label },
+      { key: "brand", value: clientLabel },
+      { key: "project lead @ meli", value: "—" },
+      { key: "project lead @ brand", value: contacto },
+      { key: "business context", value: businessContext },
+      { key: "brief in a tweet", value: briefTweet || "—" },
+      { key: "key success metrics", value: objetivosBullets },
+      { key: "target audience", value: audience },
+      { key: "key consumer insight", value: consumerInsight },
+      { key: "brand truth", value: brand },
+      { key: "cultural context", value: culturalContext },
+      { key: "key competitors", value: bulletList(riesgosExtras.length ? riesgosExtras : []) },
+      { key: "competitive differentiation", value: competitiveDiff },
+      { key: "creative concept", value: deliverables },
+      { key: "key message", value: keyMessage || "—" },
+      { key: "emotional territory", value: emotionalTerritory },
+      { key: "campaign tagline/theme", value: campaignTagline },
+      { key: "content pillars", value: deliverables },
+    ];
+
+    const rows = doc.getElementsByTagName("w:tr");
+    for (let i = 0; i < rows.length; i += 1) {
+      const row = rows.item(i);
+      const cells = row.getElementsByTagName("w:tc");
+      if (cells.length < 2) continue;
+      const labelText = normalizeLabel(getParagraphText(cells.item(0)));
+      if (!labelText) continue;
+      const filler = tableFillers.find((entry) => labelText.startsWith(entry.key));
+      if (!filler) continue;
+      const value = filler.value && String(filler.value).trim() ? filler.value : "—";
+      setCellValue(cells.item(1), value);
+    }
+
+    const preparedBy = inlineList([
+      brief?.contacto?.nombre,
+      brief?.contacto?.correo,
+      clientLabel,
+    ]);
+    const launchDate = fechas[0] || "—";
+    const duration = duracionList.length
+      ? duracionList.join(", ")
+      : fechas.length > 1
+      ? fechas.slice(1).join(", ")
+      : "—";
+    const presupuesto = presupuestoList.join(", ") || "—";
+
+    const paragraphReplacements = [
+      {
+        key: "brief prepared by:",
+        value: `Brief prepared by: ${preparedBy} Date: ${formatDateMX()}`,
+      },
+      { key: "campaign launch date :", value: `Campaign launch date : ${launchDate}` },
+      { key: "campaign duration :", value: `Campaign duration : ${duration || "—"}` },
+      {
+        key: "media spend on mercado ads :",
+        value: `Media spend on Mercado Ads : ${presupuesto}`,
+      },
+    ];
+
+    const paragraphs = doc.getElementsByTagName("w:p");
+    for (let i = 0; i < paragraphs.length; i += 1) {
+      const p = paragraphs.item(i);
+      const text = normalizeLabel(getParagraphText(p));
+      if (!text) continue;
+      const replacement = paragraphReplacements.find((entry) => text.startsWith(entry.key));
+      if (!replacement) continue;
+      setParagraphText(p, replacement.value);
+    }
+
+    const updatedXml = new XMLSerializer().serializeToString(doc);
+    zip.file("word/document.xml", updatedXml);
+    return await zip.generateAsync({ type: "nodebuffer" });
+  } catch (err) {
+    console.warn("docx brief warn:", err?.message || err);
+    return null;
+  }
+}
+
+async function uploadDocxBrief({ drive, folderId, label, brief, clientName }) {
+  const buffer = await buildDocxBriefBuffer({ brief, label, clientName });
+  if (!buffer) return null;
+  const { Readable } = await import("stream");
+  const body = Readable.from(buffer);
+  const resp = await drive.files.create({
+    requestBody: {
+      name: sanitizeName(`Brief — ${label}.docx`),
+      parents: [folderId],
+    },
+    media: {
+      mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      body,
+    },
+    fields: "id,name,webViewLink,mimeType",
+  });
+  return resp.data;
 }
 
 function soaPrompt(brief, label) {
@@ -276,7 +593,19 @@ export default async function handler(req, res) {
     const briefDoc = await createTextFile(drive, projectFolder.id, `Brief — ${label}.md`, briefMD, "text/markdown");
     await shareAnyone(drive, briefDoc.id);
 
-    // 5) State of Art
+    // 5) Plantilla DOCX
+    const briefDocx = await uploadDocxBrief({
+      drive,
+      folderId: projectFolder.id,
+      label,
+      brief,
+      clientName: client,
+    });
+    if (briefDocx?.id) {
+      await shareAnyone(drive, briefDocx.id);
+    }
+
+    // 6) State of Art
     const soaFolder = await createOrGetFolder(drive, "State of Art", projectFolder.id);
     await shareAnyone(drive, soaFolder.id);
 
@@ -295,6 +624,9 @@ export default async function handler(req, res) {
     return res.status(200).json({
       projectFolder: { id: projectFolder.id, name: projectFolder.name, link: projectFolder.webViewLink },
       briefDoc: { id: briefDoc.id, name: briefDoc.name, link: briefDoc.webViewLink },
+      briefDocx: briefDocx
+        ? { id: briefDocx.id, name: briefDocx.name, link: briefDocx.webViewLink, mimeType: briefDocx.mimeType }
+        : null,
       stateOfArt: { folderId: soaFolder.id, folderLink: soaFolder.webViewLink, docId: soaDoc.id, docLink: soaDoc.webViewLink },
       file: fileMeta ? { id: fileMeta.id, name: fileMeta.name, link: fileMeta.webViewLink, mimeType: fileMeta.mimeType } : null,
       label,
