@@ -5,7 +5,7 @@ import formidable from "formidable";
 import fs from "fs/promises";
 import path from "node:path";
 import JSZip from "jszip";
-import { DOMParser, XMLSerializer } from "xmldom";
+import { DOMParser, XMLSerializer } from "@xmldom/xmldom";
 
 export const config = {
   api: { bodyParser: false },
