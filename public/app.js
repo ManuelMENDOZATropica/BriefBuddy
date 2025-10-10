@@ -211,8 +211,9 @@ async function finalizeBriefAuto(meta = {}) {
     renderMarkdown(
       addBotContainer(),
       `
-**Proyecto creado:** [${data.projectFolder.name}](${data.projectFolder.link})  
-**Brief:** [${data.briefDoc.name}](${data.briefDoc.link})  
+**Proyecto creado:** [${data.projectFolder.name}](${data.projectFolder.link})
+**Brief:** [${data.briefDoc.name}](${data.briefDoc.link})
+${data.briefDocx ? `\n**Brief (DOCX):** [${data.briefDocx.name}](${data.briefDocx.link})` : ""}
 **State of Art:** [doc](${data.stateOfArt.docLink}) · [carpeta](${data.stateOfArt.folderLink})
 ${data.file ? `\n**Archivo:** [${data.file.name}](${data.file.link})` : ""}
       `.trim()
