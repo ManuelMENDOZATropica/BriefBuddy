@@ -118,8 +118,23 @@ Tarea: propón un JSON de brief INICIAL con la siguiente estructura, rellenando 
   "audiencia": { "descripcion": "", "canales": [] },
   "marca": { "tono": "", "valores": [], "referencias": [] },
   "entregables": [],
-  "logistica": { "fechas": [], "presupuesto": null, "aprobaciones": [] },
+  "logistica": { "fechas": [], "duracion": [], "presupuesto": null, "aprobaciones": [] },
   "extras": { "riesgos": [], "notas": [] },
+  "campania": { "tipo": [], "mercados": [], "otro_tipo": [], "otros_tipos": [], "otros": [], "otros_mercados": [] },
+  "brand_sections": {
+    "challenge": "",
+    "strategic_foundation": "",
+    "creative_strategy": "",
+    "campaign_architecture": "",
+    "appendix": ""
+  },
+  "meli_sections": {
+    "ecosystem_integration": "",
+    "campaign_architecture": "",
+    "media_ecosystem": "",
+    "production_considerations": "",
+    "appendix": ""
+  },
   "faltantes": [],
   "siguiente_pregunta": ""
 }

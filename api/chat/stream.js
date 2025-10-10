@@ -16,8 +16,10 @@ Tu propósito es ayudar al equipo de TRÓPICA a construir campañas digitales fr
 
 Estilo: cálido, claro, inesperado, siempre en Markdown (no uses bloques de código salvo necesidad), con humor y flow tropical.
 
+Debes guiar la conversación para cubrir TODOS los campos del documento "MERCADO ADS Creative Brief Template": Campaign Type, Markets y las secciones 1–10 (The Challenge, Strategic Foundation, Creative Strategy, Campaign Architecture, Appendix, MELI Ecosystem Integration, Media Ecosystem, Production Considerations, Appendix).
+
 Flujo de secciones (en orden):
-Contacto → Alcance → Objetivos → Audiencia → Marca → Entregables → Logística → Extras.
+Contacto → Alcance → Objetivos → Audiencia → Marca → Entregables → Logística → Extras → Campaign Overview → The Challenge → Strategic Foundation → Creative Strategy → Campaign Architecture (Brand) → Appendix (Brand) → MELI Ecosystem Integration → Campaign Architecture (MELI) → Media Ecosystem → Production Considerations → Appendix (MELI).
 
 Validaciones:
 - Emails válidos, fechas realistas, links válidos.
@@ -48,6 +50,17 @@ const SECTIONS = [
   "Entregables",
   "Logística",
   "Extras",
+  "Campaign Overview",
+  "The Challenge",
+  "Strategic Foundation",
+  "Creative Strategy",
+  "Campaign Architecture (Brand)",
+  "Appendix (Brand)",
+  "MELI Ecosystem Integration",
+  "Campaign Architecture (MELI)",
+  "Media Ecosystem",
+  "Production Considerations",
+  "Appendix (MELI)",
 ];
 
 const NEXT_QUESTION = {
@@ -66,6 +79,28 @@ const NEXT_QUESTION = {
     "Fechas clave y dependencias: ¿hay deadline, presupuesto tentativo, aprobaciones o restricciones?",
   Extras:
     "¿Hay riesgos, supuestos, referencias o notas adicionales que debamos considerar?",
+  "Campaign Overview":
+    "¿Qué tipo de campaña es (product launch, seasonal, brand awareness, performance) y en qué mercados estará activa?",
+  "The Challenge":
+    "¿Cuál es el desafío principal o problema de negocio que debemos resolver?",
+  "Strategic Foundation":
+    "¿Qué insight, contexto o antecedentes estratégicos respaldan esta campaña?",
+  "Creative Strategy":
+    "¿Cuál es la idea o enfoque creativo que deberíamos perseguir para cumplir los objetivos?",
+  "Campaign Architecture (Brand)":
+    "Describe la arquitectura/touchpoints de la campaña desde la perspectiva de la marca (fases, momentos, canales).",
+  "Appendix (Brand)":
+    "¿Qué materiales, guidelines, assets o notas extra de la marca debemos tener a la mano?",
+  "MELI Ecosystem Integration":
+    "¿Cómo se integrará la campaña al ecosistema de Mercado Libre/Mercado Ads?",
+  "Campaign Architecture (MELI)":
+    "Detalla el journey o piezas específicas que esperas activar dentro de MELI (tiendas oficiales, Ads, landing, etc.).",
+  "Media Ecosystem":
+    "¿Qué mix de medios/plataformas se contempla y qué rol juega cada uno?",
+  "Production Considerations":
+    "¿Hay consideraciones de producción, tiempos, aprobaciones o limitaciones técnicas que debamos prever?",
+  "Appendix (MELI)":
+    "Comparte cualquier dato, benchmark o referencia adicional para el equipo de MELI.",
 };
 
 const detectors = {
@@ -83,10 +118,29 @@ const detectors = {
     /\b(marca|brand|tono|valores|gu[ií]a de marca|brandbook|manual de marca|lineamientos)\b/i.test(t),
   Entregables: (t) => /\b(entregables?|piezas?|formatos?|resoluciones?|versiones?)\b/i.test(t),
   Logística: (t) =>
-    /\b(\d{1,2}\/\d{1,2}(\/\d{2,4})?|\d{4}-\d{2}-\d{2}|hoy|ma[ñn]ana|semana|mes|deadline|fecha|entrega|presupuesto|budget|aprobaciones?|stakeholders?)\b/i.test(
-      t
-    ),
+    /\b(\d{1,2}\/\d{1,2}(\/\d{2,4})?|\d{4}-\d{2}-\d{2}|hoy|ma[ñn]ana|semana|mes|deadline|fecha|entrega|presupuesto|budget|aprobaciones?|stakeholders?)\b/i.test(t),
   Extras: (t) => /\b(riesgos?|supuestos?|referencias?|links?|notas?|extras?)\b/i.test(t),
+  "Campaign Overview": (t) =>
+    /\b(campaign type|tipo de campa[ñn]a|product launch|seasonal|awareness|performance|mercados?|markets?|m[eé]xico|argentina|brasil|colombia)\b/i.test(t),
+  "The Challenge": (t) => /\b(desaf[ií]o|challenge|problema|oportunidad|pain point)\b/i.test(t),
+  "Strategic Foundation": (t) =>
+    /\b(insight|fundament[oa]|strategic foundation|contexto|aprendizaje|benchmark)\b/i.test(t),
+  "Creative Strategy": (t) =>
+    /\b(creative strategy|estrategia creativa|idea creativa|concepto|big idea)\b/i.test(t),
+  "Campaign Architecture (Brand)": (t) =>
+    /\b(arquitectura|journey|touchpoints?|customer journey|fases|roadmap|flujo)\b/i.test(t),
+  "Appendix (Brand)": (t) =>
+    /\b(appendix|assets?|material(?:es)?|guidelines?|brandbook|referencias? adicionales)\b/i.test(t),
+  "MELI Ecosystem Integration": (t) =>
+    /\b(meli|mercado\s*(ads|libre)|ecosistema meli|ecosistema de mercado)\b/i.test(t),
+  "Campaign Architecture (MELI)": (t) =>
+    /\b(meli|mercado\s*ads|tienda oficial|landing|media buy|activaci[oó]n en meli|journey en meli)\b/i.test(t),
+  "Media Ecosystem": (t) =>
+    /\b(media|medios|plataformas|mix de medios|paid media|plan de medios|ecosistema de medios)\b/i.test(t),
+  "Production Considerations": (t) =>
+    /\b(producci[oó]n|timings?|postproducci[oó]n|limitaciones?|aprobaciones|recursos t[eé]cnicos)\b/i.test(t),
+  "Appendix (MELI)": (t) =>
+    /\b(appendix|meli|mercado\s*ads|benchmarks?|datos adicionales|referencias? meli)\b/i.test(t),
 };
 
 /* ───────────────────────────── Utils ───────────────────────────── */
