@@ -5,6 +5,13 @@ const sendBtn = document.getElementById("send");
 const resetBtn = document.getElementById("reset");
 const fileInput = document.getElementById("fileInput");
 
+function scrollLogToBottom() {
+  if (!log) return;
+  requestAnimationFrame(() => {
+    log.scrollTop = log.scrollHeight;
+  });
+}
+
 try {
   localStorage.removeItem("briefBuddyHistory");
   sessionStorage.removeItem("briefBuddyHistory");
@@ -159,18 +166,21 @@ function addUserBubble(text) {
   const div = document.createElement("div");
   div.className = "bubble user";
   div.textContent = text;
-  log.prepend(div);
+  log.appendChild(div);
+  scrollLogToBottom();
 }
 function addBotContainer() {
   const div = document.createElement("div");
   div.className = "bubble bot";
   div.innerHTML = "";
-  log.prepend(div);
+  log.appendChild(div);
+  scrollLogToBottom();
   return div;
 }
 function renderMarkdown(el, md) {
   const cleaned = (md || "").replace(/\n{3,}/g, "\n\n");
   el.innerHTML = marked.parse(cleaned);
+  scrollLogToBottom();
 }
 function trimHistory() {
   const start = Math.max(0, history.length - MAX_TURNS);
@@ -208,16 +218,13 @@ async function finalizeBriefAuto(meta = {}) {
 
     if (!r.ok) throw new Error(data?.error || `${r.status} ${r.statusText}`);
 
-    renderMarkdown(
-      addBotContainer(),
-      `
-**Proyecto creado:** [${data.projectFolder.name}](${data.projectFolder.link})
-**Brief:** [${data.briefDoc.name}](${data.briefDoc.link})
-${data.briefDocx ? `\n**Brief (DOCX):** [${data.briefDocx.name}](${data.briefDocx.link})` : ""}
-**State of Art:** [doc](${data.stateOfArt.docLink}) · [carpeta](${data.stateOfArt.folderLink})
-${data.file ? `\n**Archivo:** [${data.file.name}](${data.file.link})` : ""}
-      `.trim()
-    );
+    const summaryLines = [
+      `**Proyecto creado:** [${data.projectFolder.name}](${data.projectFolder.link})`,
+      data.briefDocx ? `**Brief (DOCX):** [${data.briefDocx.name}](${data.briefDocx.link})` : "",
+      data.file ? `**Archivo:** [${data.file.name}](${data.file.link})` : "",
+    ].filter(Boolean);
+
+    renderMarkdown(addBotContainer(), summaryLines.join("\n"));
   } catch (e) {
     showWarning("No pude finalizar automáticamente: " + (e.message || e));
     finalizeTriggered = false; // permite reintento si lo deseas
