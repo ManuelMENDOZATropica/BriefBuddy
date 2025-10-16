@@ -499,6 +499,8 @@ async function buildDocxBriefBuffer({ brief, label, clientName }) {
     const preparedBy = inlineList([
       brief?.contacto?.nombre,
       brief?.contacto?.correo,
+      brief?.contacto?.pais,
+      brief?.contacto?.idioma,
       clientLabel,
     ]);
     const launchDate = fechas[0] || "—";
@@ -589,7 +591,7 @@ function finalBriefPrompt(historyJson) {
   return [
     { role: "system", content: "Eres un PM creativo. Devuelve SOLO JSON válido." },
     { role: "user", content: `
-A partir de este historial de conversación (JSON) devuelve el **brief FINAL** en el siguiente esquema. No inventes datos; si falta algo, déjalo vacío o enuméralo en "faltantes". Asegúrate de que todos los textos estén en español.
+A partir de este historial de conversación (JSON) devuelve el **brief FINAL** en el siguiente esquema. No inventes datos; si falta algo, déjalo vacío o enuméralo en "faltantes". Asegúrate de que todos los textos estén en español. Los campos contacto.pais y contacto.idioma son obligatorios: si el usuario no los proporcionó, déjalos en blanco y agrega faltantes específicos (por ejemplo "Falta país de origen" o "Falta idioma preferido").
 Historial:
 \`\`\`json
 ${historyJson}
@@ -597,7 +599,7 @@ ${historyJson}
 
 Esquema:
 {
-  "contacto": { "nombre": "", "correo": "" },
+  "contacto": { "nombre": "", "correo": "", "pais": "", "idioma": "" },
   "alcance": "",
   "objetivos": [],
   "audiencia": { "descripcion": "", "canales": [] },

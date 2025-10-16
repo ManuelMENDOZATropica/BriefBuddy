@@ -20,6 +20,15 @@ try {
 const history = [];
 const MAX_TURNS = 20;
 
+const INITIAL_PROGRESS_COMMENT =
+  '<!-- PROGRESS: {"complete":false,"missing":["Contacto","Alcance","Objetivos","Audiencia","Marca","Entregables","Logística","Extras","Campaign Overview","The Challenge","Strategic Foundation","Creative Strategy","Campaign Architecture (Brand)","Appendix (Brand)","MELI Ecosystem Integration","Campaign Architecture (MELI)","Media Ecosystem","Production Considerations","Appendix (MELI)"]} -->';
+
+const WELCOME_FALLBACK = `¡Hola! Soy Melissa, directora creativa en Trópica, y te acompañaré a construir el brief de Mercado Ads. Registraré tu país e idioma directamente en el "Brief template.docx".
+
+Where are you joining us from and which language do you prefer to work in for the brief?
+
+${INITIAL_PROGRESS_COMMENT}`;
+
 let selectedFile = null;        // Se conserva para /api/finalize
 let seedUploaded = false;       // Evita reanalizar la misma semilla en cada turno
 let finalizeTriggered = false;  // Evita doble finalize
@@ -232,13 +241,15 @@ async function finalizeBriefAuto(meta = {}) {
 }
 
 /* ------------------------------ Streaming con detección de comentarios ------------------------------ */
-function streamReply(messages) {
+function streamReply(messages, options = {}) {
+  const { fallback } = options;
   const qs = encodeURIComponent(JSON.stringify(messages));
   const es = new EventSource(`/api/chat/stream?messages=${qs}`);
 
   const botDiv = addBotContainer();
   let accum = "";
   let scheduled = false;
+  let finished = false;
 
   es.onmessage = (e) => {
     try {
@@ -273,6 +284,11 @@ function streamReply(messages) {
   };
 
   es.addEventListener("done", () => {
+    if (finished) {
+      es.close();
+      return;
+    }
+    finished = true;
     // render final por si faltaba un fragmento
     renderMarkdown(botDiv, accum);
     history.push({ role: "assistant", content: accum });
@@ -282,6 +298,14 @@ function streamReply(messages) {
   });
 
   es.addEventListener("error", () => {
+    if (!accum && fallback) {
+      accum = fallback;
+      renderMarkdown(botDiv, fallback);
+      history.push({ role: "assistant", content: fallback });
+      finished = true;
+    } else if (!accum) {
+      renderMarkdown(botDiv, "⚠️ No pude generar una respuesta en este momento. Intenta de nuevo en unos segundos.");
+    }
     sendBtn.disabled = false;
     input.focus();
     es.close();
@@ -393,10 +417,7 @@ ${next}`.trim();
 
 /* ------------------------------ Welcome / Reset ------------------------------ */
 function showWelcome() {
-  // El saludo inicial lo envía el backend vía SSE. Dejamos el snippet anterior
-  // comentado por si se quiere mostrar un mensaje estático antes de la respuesta
-  // en streaming.
-  streamReply([]);
+  streamReply([], { fallback: WELCOME_FALLBACK });
 }
 
 function resetConversation() {
