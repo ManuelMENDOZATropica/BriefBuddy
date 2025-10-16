@@ -7,15 +7,11 @@ export const config = {
 
 /* ───────────────────────────── Prompt base ───────────────────────────── */
 const SYSTEM_PROMPT = `
-Eres **MELISA @ TRÓPICA**, directora creativa tropical y estratégica especializada en Mercado Ads.
-Habla con calidez y humor ligero, siempre en Markdown y sin bloques de código salvo necesidad.
-Guía la conversación para completar cada campo del "MERCADO ADS Creative Brief Template" en el orden establecido.
-Valida correos, fechas y links; no inventes datos y evita avanzar si faltan detalles críticos.
-No repitas preguntas literalmente: si el usuario no responde, reformula con más contexto o ejemplos.
-La documentación del brief debe quedar en español aunque la conversación ocurra en otro idioma, y no generes secciones de “estado del arte”.
-Mantén respuestas concisas (máximo ~120 palabras visibles) y evita redundancias para optimizar tokens.
-Al final de cada mensaje agrega los comentarios HTML ocultos de progreso indicados por el protocolo.
-La primera interacción debe incluir una sola pregunta en inglés pidiendo país de origen y el idioma preferido para trabajar antes de continuar con el brief.
+Eres Melissa, directora creativa de Trópica especializada en Mercado Ads.
+Responde con calidez y humor ligero usando Markdown.
+Completa el "MERCADO ADS Creative Brief Template" sección por sección, validando correos, fechas y links sin inventar datos ni saltarte campos críticos.
+Mantén las respuestas concisas (≤120 palabras visibles) y añade siempre los comentarios HTML de progreso proporcionados.
+Si alguna pregunta quedó sin respuesta, reformúlala con más contexto antes de pasar a la siguiente sección.
 `;
 
 /* ───────────────────────────── Secciones y heurísticas ───────────────────────────── */
@@ -246,11 +242,11 @@ function buildStateNudge(messages = []) {
     ? `Sección **${prev}** completada. Ahora sigue con **${current}**.`
     : `Arrancamos con **${current}**.`;
 
-  const ask = `Resume hallazgos útiles en 2–3 bullets y termina con una sola pregunta sobre **${current}**. Si no hubo avance en esa sección, reformula la pregunta (usa ejemplos o campos concretos). Mantén la respuesta ≤120 palabras.`;
+  const ask = `Resume avances útiles en ≤3 bullets y termina con una sola pregunta sobre **${current}** (reformula si no hubo datos). Mantén la respuesta ≤120 palabras.`;
 
   const suggested = `Pregunta sugerida: "${NEXT_QUESTION[current] || "¿Seguimos con la siguiente sección?"}"`;
 
-  const commentsProtocol = `Añade al final: <!-- PROGRESS: ${JSON.stringify({ complete, missing: miss })} -->${
+  const commentsProtocol = `Cierra con <!-- PROGRESS: ${JSON.stringify({ complete, missing: miss })} -->${
     complete ? ` <!-- AUTO_FINALIZE: ${JSON.stringify({ category: cat, client: cli })} -->` : ""
   }`;
 
@@ -278,26 +274,16 @@ export default async function handler(req) {
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
     const stateNudge = isWelcome
-      ? `
-Presentate con calidez como Melissa, directora creativa de Trópica.
-Explica en máximo dos líneas que elaborarás el brief de Mercado Ads y registrarás su país e idioma en el "Brief template.docx".
-Invita a adjuntar cualquier documento del proyecto diciendo: "Si tienes un documento del proyecto (PDF o DOCX), adjúntalo ahora y lo usaré para prellenar el brief".
-Cierra con una sola pregunta en inglés: "Where are you joining us from and which language do you prefer to work in for the brief?".
-No hagas más preguntas en este turno.
-<!-- PROGRESS: ${JSON.stringify({ complete: false, missing: SECTIONS })} -->
-`.trim()
+      ? [
+          "Preséntate como Melissa, directora creativa de Trópica.",
+          "En máximo dos líneas, di que completarás el brief de Mercado Ads y registrarás país e idioma en \"Brief template.docx\".",
+          "Invita a subir un PDF o DOCX del proyecto para prellenar datos.",
+          "Cierra con una sola pregunta en inglés: \"Where are you joining us from and which language do you prefer for the brief?\".",
+          `<!-- PROGRESS: ${JSON.stringify({ complete: false, missing: SECTIONS })} -->`,
+        ].join("\n")
       : buildStateNudge(messages);
 
-    const conversationMessages = isWelcome
-      ? [
-          ...messages,
-          {
-            role: "user",
-            content:
-              "Inicia la conversación con el saludo de bienvenida y continúa siguiendo el protocolo dado.",
-          },
-        ]
-      : messages;
+    const conversationMessages = messages;
 
     const stream = await openai.chat.completions.create({
       model: "gpt-4o-mini",
