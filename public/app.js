@@ -415,7 +415,7 @@ sendBtn.onclick = send;
 if (resetBtn) resetBtn.onclick = resetConversation;
 
 input.addEventListener("keydown", (e) => {
-  if (e.key === "Enter" && e.shiftKey) {
+  if (e.key === "Enter" && !e.shiftKey) {
     e.preventDefault();
     send();
   }

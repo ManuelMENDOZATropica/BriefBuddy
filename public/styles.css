@@ -51,11 +51,11 @@ body.page{
   padding: 0 24px; 
   background: var(--bg);
 }
-.chat__log{ 
-  display:flex; 
-  flex-direction: column-reverse; /* nuevos mensajes ARRIBA */
-  gap: 14px; 
-  min-height: 42vh; 
+.chat__log{
+  display:flex;
+  flex-direction: column; /* flujo natural: mensajes nuevos al final */
+  gap: 14px;
+  min-height: 42vh;
 }
 
 /* ====== Bubbles ====== */
