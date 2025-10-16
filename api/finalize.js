@@ -77,15 +77,6 @@ async function shareAnyone(drive, fileId) {
     await drive.permissions.create({ fileId, requestBody: { role: "reader", type: "anyone" } });
   } catch (e) { console.warn("permissions.create warn:", e?.message || e); }
 }
-async function createTextFile(drive, folderId, name, content, mime = "text/markdown") {
-  return upsertDriveFile(drive, {
-    folderId,
-    name,
-    mimeType: mime,
-    data: typeof content === "string" ? content : String(content ?? ""),
-  });
-}
-
 async function upsertDriveFile(drive, { folderId, name, mimeType, data }) {
   const safeName = sanitizeName(name) || "Archivo";
   const mime = mimeType || "application/octet-stream";
@@ -149,109 +140,6 @@ async function upsertDriveFile(drive, { folderId, name, mimeType, data }) {
 }
 
 /* ───────────── Markdown builders ───────────── */
-function mkBriefMarkdown({ label, fileLink, brief }) {
-  const b = brief || {};
-  const faltan = Array.isArray(b.faltantes) ? b.faltantes : [];
-  const campania = b.campania || {};
-  const brandSections = b.brand_sections || {};
-  const meliSections = b.meli_sections || {};
-
-  const bulletBlock = (value) => {
-    const list = normalizeList(value);
-    return list.length ? list.map((item) => `- ${item}`).join("\n") : "—";
-  };
-
-  const inlineBlock = (value) => {
-    const list = normalizeList(value);
-    return list.length ? list.join(", ") : "—";
-  };
-
-  const paragraphBlock = (value, fallback) => formatSectionText(value, fallback);
-
-  const campaignOtros = normalizeList([campania?.otro_tipo, campania?.otros_tipos, campania?.otros]);
-  const marketOtros = normalizeList([campania?.otros_mercados, campania?.otros]);
-
-  return `# Brief — ${label}
-
-**Archivo original:** ${fileLink ? `[Link al archivo](${fileLink})` : "—"}
-
-## Contacto
-- Nombre: ${b?.contacto?.nombre || "—"}
-- Correo: ${b?.contacto?.correo || "—"}
-
-## Alcance
-${b.alcance || "—"}
-
-## Objetivos
-${bulletBlock(b.objetivos)}
-
-## Audiencia
-- Descripción: ${b?.audiencia?.descripcion || "—"}
-- Canales: ${inlineBlock(b?.audiencia?.canales)}
-
-## Marca
-- Tono: ${b?.marca?.tono || "—"}
-- Valores: ${inlineBlock(b?.marca?.valores)}
-- Referencias: ${inlineBlock(b?.marca?.referencias)}
-
-## Entregables
-${bulletBlock(b.entregables)}
-
-## Logística
-- Fechas: ${inlineBlock(b?.logistica?.fechas)}
-- Duración: ${inlineBlock(b?.logistica?.duracion)}
-- Presupuesto: ${inlineBlock(b?.logistica?.presupuesto)}
-- Aprobaciones: ${inlineBlock(b?.logistica?.aprobaciones)}
-
-## Extras
-- Riesgos:
-${bulletBlock(b?.extras?.riesgos)}
-- Notas:
-${bulletBlock(b?.extras?.notas)}
-
-## Campaign Overview
-- Tipo: ${inlineBlock(campania?.tipo)}
-- Mercados: ${inlineBlock(campania?.mercados)}
-- Otros: ${inlineBlock([...campaignOtros, ...marketOtros])}
-
-## 1. The Challenge
-${paragraphBlock(brandSections.challenge, b.alcance)}
-
-## 2. Strategic Foundation
-${paragraphBlock(brandSections.strategic_foundation, [b?.audiencia?.descripcion, b?.marca?.valores])}
-
-## 3. Creative Strategy
-${paragraphBlock(brandSections.creative_strategy, [b?.marca?.tono, b?.extras?.notas])}
-
-## 4. Campaign Architecture (Brand)
-${paragraphBlock(brandSections.campaign_architecture, b.entregables)}
-
-## 5. Appendix (Brand)
-${paragraphBlock(brandSections.appendix, b?.extras?.referencias)}
-
-## 6. MELI Ecosystem Integration
-${paragraphBlock(meliSections.ecosystem_integration, [b?.extras?.notas, b?.audiencia?.canales])}
-
-## 7. Campaign Architecture (MELI)
-${paragraphBlock(meliSections.campaign_architecture, b.entregables)}
-
-## 8. Media Ecosystem
-${paragraphBlock(meliSections.media_ecosystem, [b?.audiencia?.canales, b?.logistica?.fechas])}
-
-## 9. Production Considerations
-${paragraphBlock(meliSections.production_considerations, [b?.logistica?.fechas, b?.logistica?.aprobaciones, b?.logistica?.presupuesto])}
-
-## 10. Appendix (MELI)
-${paragraphBlock(meliSections.appendix, b?.extras?.riesgos)}
-
-## Faltantes
-${bulletBlock(faltan)}
-
-## Siguiente pregunta
-${b.siguiente_pregunta || "—"}
-`;
-}
-
 /* ───────────── DOCX helpers ───────────── */
 const WORD_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
 
@@ -690,36 +578,10 @@ async function uploadDocxBrief({ drive, folderId, label, brief, clientName }) {
   if (!buffer) return null;
   return upsertDriveFile(drive, {
     folderId,
-    name: `Brief — ${label}.docx`,
+    name: `Brief template — ${label}.docx`,
     mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     data: buffer,
   });
-}
-
-function soaPrompt(brief, label) {
-  const theme = [
-    `Genera un documento en Markdown llamado "State of Art — ${label}".`,
-    `Secciones:`,
-    `1) **20 proyectos con temáticas similares** al brief. Prioriza ganadores/destacados en **Cannes Lions**.`,
-    `2) **20 proyectos con técnicas/tecnologías similares** aunque la temática sea distinta.`,
-    `Por proyecto: Título, Marca/Cliente, Año (aprox), Reconocimiento (Cannes si aplica), 1–2 líneas de relevancia.`,
-    `No inventes URLs. Puedes sugerir términos de búsqueda.`,
-    ``,
-    `Base (resumen del brief):`,
-    JSON.stringify({
-      alcance: brief?.alcance || "",
-      objetivos: brief?.objetivos || [],
-      audiencia: brief?.audiencia || {},
-      marca: brief?.marca || {},
-      entregables: brief?.entregables || [],
-      logistica: brief?.logistica || {},
-    }, null, 2),
-  ].join("\n");
-
-  return [
-    { role: "system", content: "Eres un investigador creativo senior. Devuelve SOLO Markdown válido." },
-    { role: "user", content: theme },
-  ];
 }
 
 /* ───────────── Final brief (desde historial) ───────────── */
@@ -727,7 +589,7 @@ function finalBriefPrompt(historyJson) {
   return [
     { role: "system", content: "Eres un PM creativo. Devuelve SOLO JSON válido." },
     { role: "user", content: `
-A partir de este historial de conversación (JSON) devuelve el **brief FINAL** en el siguiente esquema. No inventes datos; si falta algo, déjalo vacío o enuméralo en "faltantes".
+A partir de este historial de conversación (JSON) devuelve el **brief FINAL** en el siguiente esquema. No inventes datos; si falta algo, déjalo vacío o enuméralo en "faltantes". Asegúrate de que todos los textos estén en español.
 Historial:
 \`\`\`json
 ${historyJson}
@@ -844,16 +706,7 @@ export default async function handler(req, res) {
       fileMeta = uploaded;
     }
 
-    // 4) Brief.md
-    const briefMD = mkBriefMarkdown({
-      label,
-      fileLink: fileMeta?.webViewLink || "",
-      brief,
-    });
-    const briefDoc = await createTextFile(drive, projectFolder.id, `Brief — ${label}.md`, briefMD, "text/markdown");
-    await shareAnyone(drive, briefDoc.id);
-
-    // 5) Plantilla DOCX
+    // 4) Plantilla DOCX (único documento generado)
     const briefDocx = await uploadDocxBrief({
       drive,
       folderId: projectFolder.id,
@@ -865,29 +718,14 @@ export default async function handler(req, res) {
       await shareAnyone(drive, briefDocx.id);
     }
 
-    // 6) State of Art
-    const soaFolder = await createOrGetFolder(drive, "State of Art", projectFolder.id);
-    await shareAnyone(drive, soaFolder.id);
-
-    const soa = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      temperature: 0.3,
-      messages: soaPrompt(brief, label),
-    });
-    const soaText = soa.choices?.[0]?.message?.content || "# State of Art\n(Contenido no disponible)";
-    const soaDoc = await createTextFile(drive, soaFolder.id, `State of Art — ${label}.md`, soaText, "text/markdown");
-    await shareAnyone(drive, soaDoc.id);
-
     // Limpieza tmp
     try { if (file?._tmpPath) await fs.unlink(file._tmpPath).catch(() => {}); } catch {}
 
     return res.status(200).json({
       projectFolder: { id: projectFolder.id, name: projectFolder.name, link: projectFolder.webViewLink },
-      briefDoc: { id: briefDoc.id, name: briefDoc.name, link: briefDoc.webViewLink },
       briefDocx: briefDocx
         ? { id: briefDocx.id, name: briefDocx.name, link: briefDocx.webViewLink, mimeType: briefDocx.mimeType }
         : null,
-      stateOfArt: { folderId: soaFolder.id, folderLink: soaFolder.webViewLink, docId: soaDoc.id, docLink: soaDoc.webViewLink },
       file: fileMeta ? { id: fileMeta.id, name: fileMeta.name, link: fileMeta.webViewLink, mimeType: fileMeta.mimeType } : null,
       label,
       brief,
